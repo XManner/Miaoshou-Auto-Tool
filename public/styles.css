@@ -521,6 +521,13 @@ body {
   font-weight: 500;
 }
 
+.config-field-help {
+  margin: 6px 0 0;
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .miaoshou-accounts-panel {
   margin-top: 4px;
   padding-top: 12px;
@@ -598,8 +605,17 @@ body {
   padding-top: 0;
 }
 
-.ai-usage-item > div {
+.ai-usage-item-head {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ai-usage-item-head > div {
+  display: flex;
+  flex: 1 1 220px;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;

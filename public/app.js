@@ -489,24 +489,17 @@
         if (collectForm.mode === 'links') {
           return `使用 ${account}，链接采集 ${targetCount} 个详情链接。`;
         }
-        if (collectForm.source === 'shopee') {
-          const siteLabel = collectForm.shopeeSite === 'ph' ? '菲律宾' : (collectForm.shopeeSite === 'th' ? '泰国' : '马来西亚');
-          return `使用 ${account}，Shopee ${siteLabel} 自动采集 ${targetCount} 个商品，1688 最高采购价 ${collectForm.maxPriceCny} 元，最大起批量 ${collectForm.shopeeMaxMoq}。`;
-        }
-        return `使用 ${account}，自动采集 ${targetCount} 个商品，最高采购价 ${collectForm.maxPriceCny} 元，最低评分 ${collectForm.minScore}。`;
+        return `使用 ${account}，自动采集 ${targetCount} 个 1688 商品，最高采购价 ${collectForm.maxPriceCny} 元，最低评分 ${collectForm.minScore}。`;
       });
       const collectAlertMessage = computed(() => {
         if (collectForm.mode === 'links') {
           return '1688 链接采集';
         }
-        return collectForm.source === 'shopee' ? 'Shopee 自动采集' : '1688 自动采集';
+        return '1688 自动采集';
       });
       const collectAlertDescription = computed(() => {
         if (collectForm.mode === 'links') {
           return '粘贴 1688 商品详情链接，系统会逐个打开详情页校验价格和风险词，合格后通过妙手开放 API 采集并认领到 TikTok 采集箱。';
-        }
-        if (collectForm.source === 'shopee') {
-          return '按关键词在 Shopee 选品，拿商品主图到 1688 以图搜款校验同款货源，合格后通过妙手开放 API 采集 Shopee 链接并认领到 TikTok 采集箱。';
         }
         return '按关键词在 1688 搜索选品，按价格、评分、优先词、排除词和安全模式过滤，合格后通过妙手开放 API 采集并认领到 TikTok 采集箱。';
       });
@@ -713,10 +706,10 @@
             edit: false,
             flash: false,
           },
-          collectSource: collectForm.mode === 'auto' ? collectForm.source : '1688',
-          collectShopeeSite: collectForm.source === 'shopee' ? collectForm.shopeeSite : 'my',
-          collectShopeeMaxPrice: collectForm.source === 'shopee' ? Number(collectForm.shopeeMaxPrice || 0) : 10000,
-          collectShopeeMaxMoq: collectForm.source === 'shopee' ? Math.max(1, Number(collectForm.shopeeMaxMoq || 1)) : 3,
+          collectSource: '1688',
+          collectShopeeSite: 'my',
+          collectShopeeMaxPrice: 10000,
+          collectShopeeMaxMoq: 3,
           collectKeywords: collectForm.mode === 'auto' ? collectForm.keywords : '',
           collectLinks: collectForm.mode === 'links' ? collectForm.links : '',
           collectCount,
@@ -1113,33 +1106,6 @@
                         <a-radio-button value="links">链接采集</a-radio-button>
                       </a-radio-group>
                     </a-form-item>
-                    <a-form-item v-if="collectForm.mode === 'auto'" label="自动采集来源" class="form-section form-section-choice">
-                      <a-radio-group v-model:value="collectForm.source" button-style="solid" class="large-radio-group">
-                        <a-radio-button value="1688">1688 自动采集</a-radio-button>
-                        <a-radio-button value="shopee">Shopee 自动采集</a-radio-button>
-                      </a-radio-group>
-                    </a-form-item>
-                    <a-row v-if="collectForm.mode === 'auto' && collectForm.source === 'shopee'" :gutter="16" class="form-section">
-                      <a-col :xs="24" :md="8">
-                        <a-form-item label="Shopee 站点">
-                          <a-select v-model:value="collectForm.shopeeSite" size="large">
-                            <a-select-option value="my">马来西亚</a-select-option>
-                            <a-select-option value="ph">菲律宾</a-select-option>
-                            <a-select-option value="th">泰国</a-select-option>
-                          </a-select>
-                        </a-form-item>
-                      </a-col>
-                      <a-col :xs="24" :md="8">
-                        <a-form-item label="Shopee 最高展示价">
-                          <a-input-number v-model:value="collectForm.shopeeMaxPrice" :min="0.01" :max="100000" :precision="2" size="large" class="full-width" />
-                        </a-form-item>
-                      </a-col>
-                      <a-col :xs="24" :md="8">
-                        <a-form-item label="1688 最大起批量">
-                          <a-input-number v-model:value="collectForm.shopeeMaxMoq" :min="1" :max="1000" size="large" class="full-width" />
-                        </a-form-item>
-                      </a-col>
-                    </a-row>
                     <a-form-item v-if="collectForm.mode === 'auto'" label="关键词" class="form-section">
                       <a-textarea v-model:value="collectForm.keywords" :rows="2" placeholder="防晒帽, 防晒冰袖, 防晒面罩" />
                     </a-form-item>
@@ -1368,6 +1334,7 @@
                             :placeholder="configFieldPlaceholder(field)"
                             @change="markConfigFieldTouched"
                           />
+                          <p v-if="field.help" class="config-field-help">{{ field.help }}</p>
                         </a-form-item>
                       </a-form>
                       <div v-if="section.key === 'miaoshou'" class="miaoshou-accounts-panel">
@@ -1489,11 +1456,13 @@
                         </a-form>
                       </div>
                       <div v-if="section.key === 'ai' && aiUsageItems.length" class="ai-usage-panel">
-                        <h4>AI 功能使用说明</h4>
+                        <h4>本地服务 AI 功能使用说明</h4>
                         <div v-for="item in aiUsageItems" :key="item.feature" class="ai-usage-item">
-                          <div>
-                            <strong>{{ item.feature }}</strong>
-                            <a-tag>{{ item.service }}</a-tag>
+                          <div class="ai-usage-item-head">
+                            <div>
+                              <strong>{{ item.feature }}</strong>
+                              <a-tag>{{ item.service }}</a-tag>
+                            </div>
                           </div>
                           <p>{{ item.description }}</p>
                         </div>

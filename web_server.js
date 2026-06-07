@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { createHash, randomUUID } = require('crypto');
 
 const ENV_PATH = path.join(__dirname, '.env');
@@ -99,10 +99,56 @@ const AI_PROVIDER_OPTIONS = [
   { value: 'kimi', label: 'Kimi' },
 ];
 
+function getBrowserOpenUrl(host, port) {
+  if (host === '0.0.0.0' || host === '::') {
+    return `http://127.0.0.1:${port}`;
+  }
+
+  return `http://${host}:${port}`;
+}
+
+function runOpenCommand(command, args) {
+  const result = spawnSync(command, args, { stdio: 'ignore' });
+  return !result.error && result.status === 0;
+}
+
+function openBrowserForServer(url) {
+  if (process.env.WEB_OPEN_BROWSER === '0') {
+    return;
+  }
+
+  if (process.platform === 'darwin') {
+    if (runOpenCommand('open', ['-a', 'Google Chrome', url])) {
+      return;
+    }
+    runOpenCommand('open', [url]);
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    runOpenCommand('cmd', ['/c', 'start', '', url]);
+    return;
+  }
+
+  runOpenCommand('xdg-open', [url]);
+}
+
 // Keep model choices in sync with the providers' official model pages.
 const DEEPSEEK_MODEL_OPTIONS = [
   { value: 'deepseek-v4-flash', label: 'deepseek-v4-flash' },
   { value: 'deepseek-v4-pro', label: 'deepseek-v4-pro' },
+];
+
+const KIMI_MODEL_OPTIONS = [
+  { value: 'kimi-k2.6', label: 'kimi-k2.6' },
+  { value: 'moonshot-v1-8k', label: 'moonshot-v1-8k' },
+  { value: 'moonshot-v1-32k', label: 'moonshot-v1-32k' },
+  { value: 'moonshot-v1-128k', label: 'moonshot-v1-128k' },
+];
+
+const TEXT_FUNCTION_MODEL_OPTIONS = [
+  ...DEEPSEEK_MODEL_OPTIONS.map((item) => ({ ...item, label: `DeepSeek ${item.label}` })),
+  ...KIMI_MODEL_OPTIONS.map((item) => ({ ...item, label: `Kimi ${item.label}` })),
 ];
 
 const MIMO_MODEL_OPTIONS = [
@@ -117,16 +163,27 @@ const MIMO_IMAGE_MODEL_OPTIONS = [
   { value: 'mimo-v2-omni', label: 'mimo-v2-omni' },
 ];
 
+TEXT_FUNCTION_MODEL_OPTIONS.push(
+  ...MIMO_MODEL_OPTIONS.map((item) => ({ ...item, label: `MiMo ${item.label}` })),
+);
+
+const VISION_FUNCTION_MODEL_OPTIONS = [
+  ...KIMI_MODEL_OPTIONS.map((item) => ({ ...item, label: `Kimi ${item.label}` })),
+  ...MIMO_IMAGE_MODEL_OPTIONS.map((item) => ({ ...item, label: `MiMo ${item.label}` })),
+];
+
 const AI_USAGE_SUMMARY = [
   {
     feature: '商品标题优化',
-    service: '默认 AI 服务',
-    description: '使用 DeepSeek 或 Kimi，把中文标题翻译并优化为适合 TikTok Shop 的英文标题。',
+    service: '商品标题优化模型',
+    modelKey: 'TITLE_OPTIMIZE_MODEL',
+    description: '文字任务，可选择 DeepSeek、Kimi 或 MiMo，把中文标题翻译并优化为适合 TikTok Shop 的英文标题。',
   },
   {
-    feature: 'SKU 属性翻译',
-    service: '默认 AI 服务',
-    description: '本地词库无法处理的规格名和规格值，会交给默认 AI 服务翻译成英文。',
+    feature: '文案翻译 / SKU 属性翻译',
+    service: '文案翻译 / SKU 属性翻译模型',
+    modelKey: 'SKU_TRANSLATION_MODEL',
+    description: '文字任务，可选择 DeepSeek、Kimi 或 MiMo；本地词库无法处理的规格名和值会交给所选模型翻译成英文。',
   },
   {
     feature: '图片审核：快速模式',
@@ -135,13 +192,15 @@ const AI_USAGE_SUMMARY = [
   },
   {
     feature: '图片审核：精细模式',
-    service: 'MiMo 图片模型',
-    description: '调用 MiMo 识别图片内容，判断图片是否与商品相关，消耗 token 较多。',
+    service: '图片审核模型',
+    modelKey: 'IMAGE_AUDIT_MODEL',
+    description: '图片任务，可选择 Kimi 或 MiMo；DeepSeek 只处理文字，不会出现在这里。',
   },
   {
     feature: '重量识别和估算',
-    service: 'MiMo 图片模型',
-    description: '优先识别包装图片里的净含量/重量，没有可见重量时再根据商品外观估算基础重量。',
+    service: '重量识别和估算模型',
+    modelKey: 'WEIGHT_ESTIMATION_MODEL',
+    description: '图片任务，可选择 Kimi 或 MiMo；优先识别包装净含量/重量，没有可见重量时再估算基础重量。',
   },
 ];
 
@@ -156,19 +215,30 @@ const PROJECT_CONFIG_SCHEMA = [
   },
   {
     key: 'ai',
-    title: 'AI 模型',
-    description: '用于标题优化、图片审核、重量估算和属性翻译。',
+    title: 'AI 模型服务',
+    description: '配置各个 AI 大模型服务的版本、接口地址和 Key。',
     fields: [
       { key: 'AI_PROVIDER', label: '默认 AI 服务', type: 'select', options: AI_PROVIDER_OPTIONS, placeholder: '请选择默认 AI 服务' },
       { key: 'DEEPSEEK_API_KEY', label: 'DeepSeek API Key', type: 'password', secret: true, allowEmptyUpdate: true, placeholder: '留空则不修改' },
       { key: 'DEEPSEEK_BASE_URL', label: 'DeepSeek Base URL', type: 'url', placeholder: 'https://api.deepseek.com' },
       { key: 'DEEPSEEK_MODEL', label: 'DeepSeek 模型', type: 'select', options: DEEPSEEK_MODEL_OPTIONS, placeholder: '请选择 DeepSeek 模型' },
       { key: 'KIMI_API_KEY', label: 'Kimi API Key', type: 'password', secret: true, allowEmptyUpdate: true, placeholder: '留空则不修改' },
-      { key: 'KIMI_MODEL', label: 'Kimi 模型', type: 'text', placeholder: 'moonshot-v1-8k' },
+      { key: 'KIMI_MODEL', label: 'Kimi 模型', type: 'select', options: KIMI_MODEL_OPTIONS, placeholder: '请选择 Kimi 模型' },
       { key: 'MIMO_API_KEY', aliases: ['Mimo_API_KEY'], label: 'MiMo API Key', type: 'password', secret: true, allowEmptyUpdate: true, placeholder: '留空则不修改' },
       { key: 'MIMO_BASE_URL', aliases: ['Mimo_BASE_URL'], label: 'MiMo Base URL', type: 'url', placeholder: 'https://token-plan-cn.xiaomimimo.com/v1' },
       { key: 'MIMO_MODEL', aliases: ['Mimo_MODEL'], label: 'MiMo 模型', type: 'select', options: MIMO_MODEL_OPTIONS, placeholder: '请选择 MiMo 模型' },
       { key: 'MIMO_IMAGE_MODEL', aliases: ['Mimo_IMAGE_MODEL'], label: 'MiMo 图片模型', type: 'select', options: MIMO_IMAGE_MODEL_OPTIONS, placeholder: '请选择 MiMo 图片模型' },
+    ],
+  },
+  {
+    key: 'featureModels',
+    title: '功能模型配置',
+    description: '选择本地服务里的具体功能调用哪个大模型。',
+    fields: [
+      { key: 'TITLE_OPTIMIZE_MODEL', label: '商品标题优化模型', type: 'select', options: TEXT_FUNCTION_MODEL_OPTIONS, defaultValue: 'deepseek-v4-flash', placeholder: '不选则使用 DeepSeek 模型', help: '可选 DeepSeek、Kimi 或 MiMo。' },
+      { key: 'SKU_TRANSLATION_MODEL', label: '文案翻译 / SKU 属性翻译模型', type: 'select', options: TEXT_FUNCTION_MODEL_OPTIONS, defaultValue: 'deepseek-v4-flash', placeholder: '不选则使用 DeepSeek 模型', help: '可选 DeepSeek、Kimi 或 MiMo。' },
+      { key: 'IMAGE_AUDIT_MODEL', label: '图片审核模型', type: 'select', options: VISION_FUNCTION_MODEL_OPTIONS, defaultValue: 'mimo-v2.5', placeholder: '不选则使用 MiMo 图片模型', help: '可选 Kimi 或 MiMo，不提供 DeepSeek。' },
+      { key: 'WEIGHT_ESTIMATION_MODEL', label: '重量识别和估算模型', type: 'select', options: VISION_FUNCTION_MODEL_OPTIONS, defaultValue: 'mimo-v2.5', placeholder: '不选则使用 MiMo 图片模型', help: '可选 Kimi 或 MiMo，不提供 DeepSeek。' },
     ],
   },
 ];
@@ -759,6 +829,7 @@ function getProjectConfigEnvValue(env = {}, field = {}) {
 
 function serializeProjectConfigField(field, env, { includeLocalEnv = false } = {}) {
   const value = getProjectConfigEnvValue(env, field);
+  const effectiveValue = value || field.defaultValue || '';
   const secret = Boolean(field.secret);
   return {
     key: field.key,
@@ -767,7 +838,7 @@ function serializeProjectConfigField(field, env, { includeLocalEnv = false } = {
     placeholder: field.placeholder || '',
     options: Array.isArray(field.options) ? field.options : [],
     secret,
-    value: includeLocalEnv ? value : '',
+    value: includeLocalEnv ? effectiveValue : '',
     hasValue: Boolean(value),
     masked: maskSecret(value),
   };
@@ -2627,8 +2698,10 @@ const server = http.createServer((request, response) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Miaoshou Auto UI: http://${HOST}:${PORT}`);
+  const browserUrl = getBrowserOpenUrl(HOST, PORT);
   if (HOST === '0.0.0.0' || HOST === '::') {
+    console.log(`Miaoshou Auto UI: ${browserUrl}`);
+    console.log(`Bind address: http://${HOST}:${PORT}`);
     const lanUrls = getLanUrls(PORT);
     if (lanUrls.length > 0) {
       console.log('LAN URLs:');
@@ -2636,5 +2709,8 @@ server.listen(PORT, HOST, () => {
         console.log(`  ${url}`);
       }
     }
+  } else {
+    console.log(`Miaoshou Auto UI: ${browserUrl}`);
   }
+  openBrowserForServer(browserUrl);
 });

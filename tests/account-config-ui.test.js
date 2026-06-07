@@ -35,6 +35,11 @@ assert.ok(
   'Kimi API Key',
   'MiMo API Key',
   'MiMo Base URL',
+  '商品标题优化模型',
+  '文案翻译 / SKU 属性翻译模型',
+  '图片审核模型',
+  '重量识别和估算模型',
+  '功能模型配置',
 ].forEach((text) => {
   assert.ok(combinedSource.includes(text), `Config page should include ${text}.`);
 });
@@ -69,6 +74,21 @@ assert.ok(
     && appSource.includes('AI 功能使用说明')
     && appSource.includes('ai-usage-panel'),
   'Config page should explain which AI service is used by each feature.',
+);
+
+assert.ok(
+  combinedSource.includes('TEXT_FUNCTION_MODEL_OPTIONS')
+    && combinedSource.includes('VISION_FUNCTION_MODEL_OPTIONS')
+    && combinedSource.includes("key: 'IMAGE_AUDIT_MODEL'")
+    && combinedSource.includes("key: 'WEIGHT_ESTIMATION_MODEL'"),
+  'Config page should receive selectable per-feature AI model options from the server.',
+);
+
+assert.ok(
+  !appSource.includes('visibleConfigSections')
+    && !appSource.includes('usageFieldOnly')
+    && !appSource.includes('ai-usage-model-select'),
+  'Per-feature AI model selectors should render as their own config section, not inside the usage panel.',
 );
 
 assert.ok(

@@ -65,6 +65,10 @@ const DEFAULT_DEEPSEEK_MAX_RETRIES = Math.max(
   0,
   Math.floor(parseNumber(process.env.DEEPSEEK_MAX_RETRIES, 2)),
 );
+const DEFAULT_TITLE_OPTIMIZE_MODEL = DEFAULT_DEEPSEEK_MODEL;
+const DEFAULT_SKU_TRANSLATION_MODEL = DEFAULT_DEEPSEEK_MODEL;
+const DEFAULT_IMAGE_AUDIT_MODEL = DEFAULT_MIMO_IMAGE_MODEL;
+const DEFAULT_WEIGHT_ESTIMATION_MODEL = DEFAULT_MIMO_IMAGE_MODEL;
 const DEFAULT_AI_JSON_PARSE_RETRY_COUNT = Math.max(
   0,
   Math.floor(parseNumber(process.env.AI_JSON_PARSE_RETRY_COUNT, 1)),
@@ -588,19 +592,44 @@ function getKimiClient() {
 
 function normalizeAiProvider(provider = DEFAULT_AI_PROVIDER) {
   const normalized = String(provider || '').trim().toLowerCase();
-  return normalized === 'deepseek' ? 'deepseek' : 'kimi';
+  if (normalized === 'deepseek' || normalized === 'mimo') {
+    return normalized;
+  }
+  return 'kimi';
 }
 
 function getDefaultAiModel(provider = DEFAULT_AI_PROVIDER) {
-  return normalizeAiProvider(provider) === 'deepseek'
-    ? (process.env.DEEPSEEK_MODEL || DEFAULT_DEEPSEEK_MODEL)
-    : (process.env.KIMI_MODEL || DEFAULT_KIMI_MODEL);
+  const normalizedProvider = normalizeAiProvider(provider);
+  if (normalizedProvider === 'deepseek') {
+    return process.env.DEEPSEEK_MODEL || DEFAULT_DEEPSEEK_MODEL;
+  }
+  if (normalizedProvider === 'mimo') {
+    return getMimoModel();
+  }
+  return process.env.KIMI_MODEL || DEFAULT_KIMI_MODEL;
+}
+
+function isKimiModel(model = '') {
+  return /^(?:kimi-|moonshot-)/i.test(String(model || '').trim());
+}
+
+function isMimoModel(model = '') {
+  return /^mimo-/i.test(String(model || '').trim());
 }
 
 function resolveAiProviderForRequest(requestBody = {}, provider = DEFAULT_AI_PROVIDER) {
   const normalizedProvider = normalizeAiProvider(provider);
   const model = String(requestBody.model || '');
-  return /^deepseek-/i.test(model) ? 'deepseek' : normalizedProvider;
+  if (/^deepseek-/i.test(model)) {
+    return 'deepseek';
+  }
+  if (isKimiModel(model)) {
+    return 'kimi';
+  }
+  if (/^mimo-/i.test(model)) {
+    return 'mimo';
+  }
+  return normalizedProvider;
 }
 
 function isDeepSeekModel(model = getDefaultAiModel()) {
@@ -637,20 +666,74 @@ function getMimoImageModel(envKey = '') {
     || DEFAULT_MIMO_IMAGE_MODEL;
 }
 
+function normalizeModelName(value = '') {
+  return String(value || '').trim();
+}
+
+function getTitleOptimizeModel(model = '') {
+  return normalizeModelName(model)
+    || normalizeModelName(process.env.TITLE_OPTIMIZE_MODEL)
+    || DEFAULT_TITLE_OPTIMIZE_MODEL;
+}
+
+function getSkuTranslationModel(model = '') {
+  return normalizeModelName(model)
+    || normalizeModelName(process.env.SKU_TRANSLATION_MODEL)
+    || DEFAULT_SKU_TRANSLATION_MODEL;
+}
+
+function getImageAuditModel(model = '') {
+  return resolveVisionFunctionModel(
+    normalizeModelName(model) || normalizeModelName(process.env.IMAGE_AUDIT_MODEL) || DEFAULT_IMAGE_AUDIT_MODEL,
+    'IMAGE_AUDIT_MODEL',
+  );
+}
+
+function getWeightEstimationModel(model = '') {
+  return resolveVisionFunctionModel(
+    normalizeModelName(model) || normalizeModelName(process.env.WEIGHT_ESTIMATION_MODEL) || DEFAULT_WEIGHT_ESTIMATION_MODEL,
+    'WEIGHT_ESTIMATION_MODEL',
+  );
+}
+
 function isMimoImageCapableModel(model = '') {
   return /^(?:mimo-v2\.5|mimo-v2-omni)$/i.test(String(model || '').trim());
 }
 
 function resolveKimiVisionModel(model = getDefaultAiModel(), envKey = '') {
-  if (!isDeepSeekModel(model)) {
-    return model || process.env.KIMI_MODEL || DEFAULT_KIMI_MODEL;
+  const requestedModel = normalizeModelName(model);
+  if (isKimiModel(requestedModel)) {
+    return requestedModel;
   }
 
-  return (envKey ? process.env[envKey] : '')
-    || process.env.KIMI_WEIGHT_ESTIMATION_MODEL
-    || process.env.KIMI_IMAGE_AUDIT_MODEL
-    || process.env.KIMI_MODEL
+  const envModel = normalizeModelName(envKey ? process.env[envKey] : '');
+  if (isKimiModel(envModel)) {
+    return envModel;
+  }
+
+  return normalizeModelName(process.env.KIMI_WEIGHT_ESTIMATION_MODEL)
+    || normalizeModelName(process.env.KIMI_IMAGE_AUDIT_MODEL)
+    || normalizeModelName(process.env.KIMI_MODEL)
     || DEFAULT_KIMI_MODEL;
+}
+
+function resolveVisionFunctionModel(model = '', envKey = '') {
+  const requestedModel = normalizeModelName(model);
+  const envModel = normalizeModelName(envKey ? process.env[envKey] : '');
+  const candidate = requestedModel || envModel;
+
+  if (isKimiModel(candidate)) {
+    return resolveKimiVisionModel(candidate, envKey);
+  }
+  if (isMimoModel(candidate)) {
+    return resolveMimoVisionModel(candidate, envKey);
+  }
+
+  return resolveMimoVisionModel('', envKey);
+}
+
+function isKimiVisionModel(model = '') {
+  return isKimiModel(model);
 }
 
 function resolveMimoVisionModel(model = getDefaultAiModel(), envKey = '') {
@@ -897,6 +980,13 @@ async function createMimoChatCompletion(requestBody = {}, { taskLabel = 'MiMo �
   throw lastError || new Error('MiMo request failed.');
 }
 
+async function createVisionChatCompletion(requestBody = {}, { taskLabel = '视觉识别' } = {}) {
+  const model = normalizeModelName(requestBody.model);
+  return isKimiVisionModel(model)
+    ? createKimiChatCompletion(requestBody)
+    : createMimoChatCompletion(requestBody, { taskLabel });
+}
+
 async function createDeepSeekChatCompletion(requestBody = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
 
@@ -963,9 +1053,13 @@ async function createDeepSeekChatCompletion(requestBody = {}) {
 
 async function createAiChatCompletion(requestBody = {}, { provider = DEFAULT_AI_PROVIDER } = {}) {
   const resolvedProvider = resolveAiProviderForRequest(requestBody, provider);
-  return resolvedProvider === 'deepseek'
-    ? createDeepSeekChatCompletion(requestBody)
-    : createKimiChatCompletion(requestBody);
+  if (resolvedProvider === 'deepseek') {
+    return createDeepSeekChatCompletion(requestBody);
+  }
+  if (resolvedProvider === 'mimo') {
+    return createMimoChatCompletion(requestBody, { taskLabel: 'MiMo 文字调用' });
+  }
+  return createKimiChatCompletion(requestBody);
 }
 
 // 清理模型返回的标题：去掉换行、多余引号，并用最大长度兜底控制 TikTok 标题长度。
@@ -2684,7 +2778,11 @@ async function estimateGrossWeightWithMimoVision({
   categoryName,
   model,
 } = {}) {
-  if (!ENABLE_MIMO_WEIGHT_ESTIMATION || !hasMimoApiKey()) {
+  const weightModel = getWeightEstimationModel(model);
+  if (!ENABLE_MIMO_WEIGHT_ESTIMATION) {
+    return null;
+  }
+  if (isKimiVisionModel(weightModel) ? !hasKimiApiKey() : !hasMimoApiKey()) {
     return null;
   }
 
@@ -2713,8 +2811,8 @@ async function estimateGrossWeightWithMimoVision({
     ].join(' '),
   };
 
-  const completion = await createMimoChatCompletion({
-    model: resolveMimoVisionModel(model, 'MIMO_WEIGHT_ESTIMATION_MODEL'),
+  const completion = await createVisionChatCompletion({
+    model: weightModel,
     temperature: DEFAULT_MIMO_TEMPERATURE,
     messages: [
       {
@@ -2739,7 +2837,7 @@ async function estimateGrossWeightWithMimoVision({
         ],
       },
     ],
-  }, { taskLabel: 'MiMo 重量识别' });
+  }, { taskLabel: isKimiVisionModel(weightModel) ? 'Kimi 重量识别' : 'MiMo 重量识别' });
 
   const content = completion
     && completion.choices
@@ -3792,14 +3890,17 @@ async function buildImageRelevanceMapWithMimo({
   imageUrls = [],
   title = '',
   categoryName = DEFAULT_CATEGORY_NAME,
-  model = getDefaultAiModel(),
+  model = '',
 } = {}) {
   const verdictMap = await buildLocalImagePolicyVerdictMap(imageUrls);
+  const auditModel = getImageAuditModel(model);
 
-  if (!ENABLE_MIMO_IMAGE_RELEVANCE_CHECK || !hasMimoApiKey()) {
+  if (!ENABLE_MIMO_IMAGE_RELEVANCE_CHECK) {
     return verdictMap;
   }
-  const auditModel = resolveMimoVisionModel(model, 'MIMO_IMAGE_AUDIT_MODEL');
+  if (isKimiVisionModel(auditModel) ? !hasKimiApiKey() : !hasMimoApiKey()) {
+    return verdictMap;
+  }
 
   const uniqueUrls = uniqueUrlList(imageUrls);
   const candidateUrls = [];
@@ -3873,7 +3974,7 @@ async function buildImageRelevanceMapWithMimo({
   });
 
   try {
-    const completion = await createMimoChatCompletion({
+    const completion = await createVisionChatCompletion({
       model: auditModel,
       temperature: DEFAULT_MIMO_TEMPERATURE,
       messages: [
@@ -3899,7 +4000,7 @@ async function buildImageRelevanceMapWithMimo({
           content: userContent,
         },
       ],
-    }, { taskLabel: 'MiMo 图片审核' });
+    }, { taskLabel: isKimiVisionModel(auditModel) ? 'Kimi 图片审核' : 'MiMo 图片审核' });
 
     const content = completion
       && completion.choices
@@ -4620,7 +4721,7 @@ function parseSpecTranslationEntries(payload = {}) {
 
 async function buildSpecTranslationMapWithKimi(
   sourceTexts = [],
-  { model = getDefaultAiModel() } = {},
+  { model = getSkuTranslationModel() } = {},
 ) {
   if (!Array.isArray(sourceTexts) || sourceTexts.length === 0) {
     return new Map();
@@ -4674,7 +4775,7 @@ async function buildSpecTranslationMapWithKimi(
 
 async function translateSkuPropertyListToEnglish(
   skuPropertyList = [],
-  { model = getDefaultAiModel() } = {},
+  { model = getSkuTranslationModel() } = {},
 ) {
   const cleanedPropertyList = cleanSkuPropertyList(skuPropertyList);
   if (cleanedPropertyList.length === 0) {
@@ -5223,7 +5324,7 @@ async function optimizeProductTitleWithKimi({
   site,
   item = {},
   itemInfo = {},
-  model = getDefaultAiModel(),
+  model = getTitleOptimizeModel(),
   maxTitleLength = DEFAULT_TITLE_MAX_LENGTH,
 } = {}) {
   const originalTitle = normalizeOptimizedTitle(title, maxTitleLength);
@@ -7233,7 +7334,8 @@ async function buildUpdatedTitleSiteCollectItemInfo(
   sourcePriceAdjustmentCny = null,
   sourcePriceAdjustmentThresholdCny = null,
   {
-    imageAuditModel = getDefaultAiModel(),
+    imageAuditModel = getImageAuditModel(),
+    skuTranslationModel = getSkuTranslationModel(),
     sourcePriceExtraCny = 0,
     skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
   } = {},
@@ -7258,7 +7360,7 @@ async function buildUpdatedTitleSiteCollectItemInfo(
   const oldNotes = buildImageOnlyNotesHtml(extractImageUrlsFromNotes(siteCollectItemInfo.notes));
   const translatedSkuPropertyList = await translateSkuPropertyListToEnglish(
     normalizedPreparedSpec.skuPropertyList,
-    { model: imageAuditModel },
+    { model: skuTranslationModel },
   );
   const shouldAddWeightPadding = containsCjkText(siteCollectItemInfo.title)
     || !siteCollectItemInfo.cid
@@ -8486,7 +8588,7 @@ async function optimizeQueriedItemTitles({
   batchSize = 5,
   requestIntervalMs = 1500,
   apply = false,
-  model = getDefaultAiModel(),
+  model = '',
   maxTitleLength = DEFAULT_TITLE_MAX_LENGTH,
   groupSites = DEFAULT_TIKTOK_SHOP_SITES,
   autoClaimMode = 'allGroups',
@@ -8500,6 +8602,9 @@ async function optimizeQueriedItemTitles({
     throw new Error('Missing --site. Example: node miaoshou_auto.js optimize-titles --site PH');
   }
 
+  const titleOptimizeModel = getTitleOptimizeModel(model);
+  const imageAuditModel = getImageAuditModel();
+  const skuTranslationModel = getSkuTranslationModel();
   const normalizedGroupSites = uniqueIdList(groupSites).map((item) => String(item).toUpperCase());
   const category = categoryName ? await findCategoryByName({ site, categoryName }) : null;
   const items = await resolveTargetItems(searchParams);
@@ -8697,7 +8802,7 @@ async function optimizeQueriedItemTitles({
           site,
           item,
           itemInfo,
-          model,
+          model: titleOptimizeModel,
           maxTitleLength,
         });
         const selectedGrossWeightKg = chooseGrossWeightKg({
@@ -8738,7 +8843,8 @@ async function optimizeQueriedItemTitles({
           sourcePriceResolution ? sourcePriceResolution.sourcePriceAdjustmentCny : null,
           sourcePriceResolution ? sourcePriceResolution.sourcePriceAdjustmentThresholdCny : null,
           {
-            imageAuditModel: model,
+            imageAuditModel,
+            skuTranslationModel,
             sourcePriceExtraCny,
             skuWeightPaddingGrams,
           },
@@ -8840,7 +8946,9 @@ async function optimizeQueriedItemTitles({
         isLastLevel: category.isLastLevel,
       }
       : null,
-    model,
+    model: titleOptimizeModel,
+    imageAuditModel,
+    skuTranslationModel,
     maxTitleLength,
     totalCount: items.length,
     changedCount: results.filter((item) => item.changed).length,
@@ -9158,7 +9266,7 @@ async function editAndPublishCollectBoxItems({
   batchSize = 5,
   requestIntervalMs = 1200,
   apply = false,
-  model = getDefaultAiModel(),
+  model = '',
   maxTitleLength = DEFAULT_TITLE_MAX_LENGTH,
   shopIds = [],
   publishAllShops = false,
@@ -9545,7 +9653,7 @@ function parseArgs(argv) {
     maxPages: 1,
     batchSize: 5,
     requestIntervalMs: 1200,
-    model: getDefaultAiModel(),
+    model: '',
     maxTitleLength: DEFAULT_TITLE_MAX_LENGTH,
     platform: 'tiktok',
     detailIds: [],

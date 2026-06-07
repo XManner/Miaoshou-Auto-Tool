@@ -5,6 +5,11 @@ const path = require('path');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'web_server.js'), 'utf8');
 const oldLookupKey = `ALI1688_${['COO', 'KIE'].join('')}`;
 const oldLookupLabel = `168${'8'} ${['Cook', 'ie'].join('')}`;
+const visionOptionsStart = serverSource.indexOf('const VISION_FUNCTION_MODEL_OPTIONS');
+const visionOptionsEnd = serverSource.indexOf('const AI_USAGE_SUMMARY');
+const visionOptionsBlock = visionOptionsStart >= 0 && visionOptionsEnd > visionOptionsStart
+  ? serverSource.slice(visionOptionsStart, visionOptionsEnd)
+  : '';
 
 assert.ok(
   serverSource.includes('PROJECT_CONFIG_SCHEMA')
@@ -16,20 +21,59 @@ assert.ok(
 assert.ok(
   serverSource.includes('AI_PROVIDER_OPTIONS')
     && serverSource.includes('DEEPSEEK_MODEL_OPTIONS')
+    && serverSource.includes('KIMI_MODEL_OPTIONS')
+    && serverSource.includes('TEXT_FUNCTION_MODEL_OPTIONS')
+    && serverSource.includes('VISION_FUNCTION_MODEL_OPTIONS')
     && serverSource.includes('MIMO_MODEL_OPTIONS')
     && serverSource.includes('MIMO_IMAGE_MODEL_OPTIONS')
     && serverSource.includes("type: 'select'")
     && serverSource.includes("key: 'AI_PROVIDER'")
-    && serverSource.includes('AI_USAGE_SUMMARY')
-    && serverSource.includes('aiUsage: AI_USAGE_SUMMARY'),
-  'Account config should expose AI provider choices and AI usage summary metadata.',
+    && serverSource.includes("key: 'featureModels'")
+    && serverSource.includes("title: '功能模型配置'"),
+  'Account config should expose provider settings and a separate feature model section.',
+);
+
+[
+  'TITLE_OPTIMIZE_MODEL',
+  'SKU_TRANSLATION_MODEL',
+  'IMAGE_AUDIT_MODEL',
+  'WEIGHT_ESTIMATION_MODEL',
+].forEach((key) => {
+  assert.ok(serverSource.includes(`key: '${key}'`), `Project config should include function model field ${key}.`);
+});
+
+assert.ok(
+  /key: 'TITLE_OPTIMIZE_MODEL'[\s\S]*options: TEXT_FUNCTION_MODEL_OPTIONS/.test(serverSource)
+    && /key: 'SKU_TRANSLATION_MODEL'[\s\S]*options: TEXT_FUNCTION_MODEL_OPTIONS/.test(serverSource),
+  'Text features should let users choose from DeepSeek, Kimi, or MiMo models.',
+);
+
+assert.ok(
+  /key: 'IMAGE_AUDIT_MODEL'[\s\S]*options: VISION_FUNCTION_MODEL_OPTIONS/.test(serverSource)
+    && /key: 'WEIGHT_ESTIMATION_MODEL'[\s\S]*options: VISION_FUNCTION_MODEL_OPTIONS/.test(serverSource),
+  'Image-related features should only let users choose Kimi or MiMo image-capable models.',
+);
+
+assert.ok(
+  /key: 'TITLE_OPTIMIZE_MODEL'[\s\S]*defaultValue: 'deepseek-v4-flash'/.test(serverSource)
+    && /key: 'SKU_TRANSLATION_MODEL'[\s\S]*defaultValue: 'deepseek-v4-flash'/.test(serverSource)
+    && /key: 'IMAGE_AUDIT_MODEL'[\s\S]*defaultValue: 'mimo-v2\.5'/.test(serverSource)
+    && /key: 'WEIGHT_ESTIMATION_MODEL'[\s\S]*defaultValue: 'mimo-v2\.5'/.test(serverSource),
+  'Function model selectors should provide the requested default selections.',
+);
+
+assert.ok(
+  /TEXT_FUNCTION_MODEL_OPTIONS[\s\S]*DeepSeek[\s\S]*Kimi[\s\S]*MiMo/.test(serverSource)
+    && /Kimi[\s\S]*MiMo/.test(visionOptionsBlock)
+    && !visionOptionsBlock.includes('DeepSeek'),
+  'Function model option groups should match text and image provider rules.',
 );
 
 assert.ok(
   serverSource.includes('includeLocalEnv')
     && serverSource.includes("url.searchParams.get('useLocalEnv')")
-    && serverSource.includes('value: includeLocalEnv ? value :'),
-  'GET /api/config should only return local .env values when explicitly requested.',
+    && serverSource.includes('value: includeLocalEnv ? effectiveValue :'),
+  'GET /api/config should return local .env values or schema defaults only when explicitly requested.',
 );
 
 [

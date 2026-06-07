@@ -33,10 +33,10 @@ assert.ok(
   'Automatic collection source should default to 1688.',
 );
 assert.ok(
-  appSource.includes('Shopee 自动采集')
-    && appSource.includes('shopeeSite')
-    && appSource.includes('马来西亚'),
-  'Collection page should expose Shopee automatic collection settings.',
+  !appSource.includes('<a-radio-button value="shopee">')
+    && !appSource.includes('label="Shopee 站点"')
+    && !appSource.includes("collectForm.mode === 'auto' && collectForm.source === 'shopee'"),
+  'Collection page should hide Shopee automatic collection settings until the workflow is implemented.',
 );
 assert.ok(
   appSource.includes('collectCount: 10') || appSource.includes('count: 10'),
@@ -72,12 +72,12 @@ assert.ok(
 assert.ok(
   appSource.includes('const collectLinkList = computed')
     && appSource.includes("collectForm.mode === 'links' ? Math.max(1, collectLinkList.value.length)")
-    && appSource.includes('collectSource: collectForm.mode === \'auto\' ? collectForm.source : \'1688\'')
-    && appSource.includes('collectShopeeSite: collectForm.source === \'shopee\' ? collectForm.shopeeSite : \'my\'')
+    && appSource.includes("collectSource: '1688'")
+    && appSource.includes("collectShopeeSite: 'my'")
     && appSource.includes("collectKeywords: collectForm.mode === 'auto' ? collectForm.keywords : ''")
     && appSource.includes("collectLinks: collectForm.mode === 'links' ? collectForm.links : ''")
     && appSource.includes("collectSkipFilters: collectForm.mode === 'links'"),
-  'Collection payload should submit active mode inputs, source settings, and derive link-mode target count from pasted links.',
+  'Collection payload should submit active mode inputs, force 1688 as the visible source, and derive link-mode target count from pasted links.',
 );
 assert.ok(
   appSource.includes('<div v-if="collectForm.mode === \'auto\'" class="collect-auto-filter-panel"'),

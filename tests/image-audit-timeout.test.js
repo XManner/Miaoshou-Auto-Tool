@@ -10,13 +10,13 @@ assert.ok(match, 'Missing buildImageRelevanceMapWithMimo function.');
 const functionSource = match[0];
 assert.match(
   functionSource,
-  /try\s*{\s*const completion = await createMimoChatCompletion/,
-  'MiMo image audit should be isolated in a try block.',
+  /try\s*{\s*const completion = await createVisionChatCompletion/,
+  'Vision image audit should be isolated in a try block.',
 );
 assert.match(
   functionSource,
   /catch \(error\) {\s*return verdictMap;\s*}/,
-  'MiMo image audit failures should fall back to local image policy verdicts.',
+  'Vision image audit failures should fall back to local image policy verdicts.',
 );
 
 console.log('image audit timeout fallback checks passed');
