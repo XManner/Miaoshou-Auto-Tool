@@ -1,0 +1,31 @@
+{
+  "name": "miaoshou_auto",
+  "version": "1.0.0",
+  "description": "Miaoshou TikTok collect-box product optimization automation.",
+  "main": "miaoshou_auto.js",
+  "scripts": {
+    "start": "node miaoshou_auto.js",
+    "web": "node web_server.js",
+    "check": "node --check miaoshou_auto.js && node --check miaoshou_flash_sale.js && node --check miaoshou_1688_collect.js && node --check web_server.js",
+    "dry": "node miaoshou_auto.js --publish false",
+    "publish": "node miaoshou_auto.js --publish true"
+  },
+  "keywords": [
+    "miaoshou",
+    "tiktok-shop",
+    "automation"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ant-design-vue": "^4.2.6",
+    "iconv-lite": "^0.7.2",
+    "openai": "^6.36.0",
+    "puppeteer-core": "^25.0.4",
+    "vue": "^3.5.35"
+  }
+}

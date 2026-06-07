@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Local secrets and machine-specific config
+.env
+.env.*
+!.env.example
+
+# Runtime logs and temporary files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+.shopee-debug.png
+tmp/
+temp/
+.cache/
+.captcha/
+.miaoshou-browser/
+
+# Local reports / exports that may contain shop or product data
+*_report.json
+shop_warehouse_mapping_report.json
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
