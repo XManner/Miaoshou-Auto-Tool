@@ -99,4 +99,26 @@ assert.strictEqual(
   'Freight extraction should still read the explicit freight price near review counts.',
 );
 
+const tierQuantityPriceRangeHtml = [
+  'HOUKEA 皮肤护理喷雾',
+  '"priceRange":"100-999盒"',
+  '¥7.00 ¥6.00 ¥5.00',
+  '1盒起批',
+  '≥1000盒',
+  '全网销量1100+盒',
+  '运费 ¥6 起',
+].join(' ');
+
+assert.strictEqual(
+  auto.extractFirstValidPriceFromText(tierQuantityPriceRangeHtml),
+  7,
+  'Quantity tiers such as "priceRange":"100-999盒" must not be treated as product price ranges.',
+);
+
+assert.strictEqual(
+  auto.extractFreightPriceFromText(tierQuantityPriceRangeHtml),
+  6,
+  'Explicit freight should still be extracted when quantity tiers appear near the visible prices.',
+);
+
 console.log('source price quantity context checks passed');

@@ -48,6 +48,63 @@ assert.strictEqual(
   'High resolved source price fallback should expose a clear source reason.',
 );
 
+assert.strictEqual(
+  typeof auto.cleanSkuMap,
+  'function',
+  'SKU cleanup helper should be exported for final source price guard regression tests.',
+);
+
+const guardedFinalSkuMap = auto.cleanSkuMap(
+  {
+    sku1: {
+      originPrice: '7.00',
+      weight: 0.06,
+    },
+  },
+  {
+    originPrice: '7.00',
+    price: '7.00',
+    skuPropertyList: [],
+  },
+  0.06,
+  {
+    forcedOriginPrice: 106,
+    forceOriginPriceOverwrite: true,
+    addWeightPadding: false,
+  },
+);
+
+assert.strictEqual(
+  Number(guardedFinalSkuMap.sku1.originPrice),
+  7,
+  'Final SKU source price above 100 CNY should fall back to the pre-edit SKU source price.',
+);
+
+const guardedFinalSkuMapAfterExtra = auto.cleanSkuMap(
+  {
+    sku1: {
+      originPrice: '98.00',
+      weight: 0.06,
+    },
+  },
+  {
+    originPrice: '98.00',
+    price: '98.00',
+    skuPropertyList: [],
+  },
+  0.06,
+  {
+    sourcePriceExtraCny: 10,
+    addWeightPadding: false,
+  },
+);
+
+assert.strictEqual(
+  Number(guardedFinalSkuMapAfterExtra.sku1.originPrice),
+  98,
+  'Source price extra should not push final SKU source price above the 100 CNY guard.',
+);
+
 assert.ok(
   appSource.includes('v-model:value="productForm.sourcePriceExtraCny"'),
   'Run page should expose a source price extra number input.',

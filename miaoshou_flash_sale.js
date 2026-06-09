@@ -2303,11 +2303,27 @@ async function getProductListRefreshState(page) {
 
     return {
       rows,
+      loadingMaskCount: loadingElements.length,
+      hasLoadingText: /加载中|Loading/i.test(text),
       loading: loadingElements.length > 0 || /加载中|Loading/i.test(text),
       hasEmpty: /暂无数据|没有数据/.test(text),
       signature: `${rows.length}:${ids.slice(0, 5).join('|')}:${ids.slice(-3).join('|')}`,
     };
   });
+}
+
+function isFilteredProductListRefreshReady(state = {}) {
+  const rows = Array.isArray(state.rows) ? state.rows : [];
+  const blockingLoading = Number(state.loadingMaskCount || 0) > 0;
+
+  if (blockingLoading) {
+    return false;
+  }
+  if (rows.length > 0) {
+    return true;
+  }
+
+  return Boolean(state.hasEmpty && !state.loading);
 }
 
 async function waitForFilteredProductListStable(page, timeout = 60000) {
@@ -2320,7 +2336,7 @@ async function waitForFilteredProductListStable(page, timeout = 60000) {
   while (Date.now() - startedAt < timeout) {
     lastState = await getProductListRefreshState(page);
     const elapsed = Date.now() - startedAt;
-    const ready = !lastState.loading && (lastState.rows.length > 0 || lastState.hasEmpty);
+    const ready = isFilteredProductListRefreshReady(lastState);
 
     if (ready && lastState.signature === lastSignature) {
       if (!stableSince) stableSince = Date.now();
@@ -2330,6 +2346,9 @@ async function waitForFilteredProductListStable(page, timeout = 60000) {
     }
 
     if (ready && elapsed >= minWaitMs && stableSince && Date.now() - stableSince >= 2500) {
+      if (lastState.hasLoadingText && lastState.rows.length > 0) {
+        log('筛选后的商品列表仍有加载提示文案，但商品行已稳定且没有可见加载遮罩，继续处理。');
+      }
       log(`筛选后的商品列表已稳定，当前可见商品行：${lastState.rows.length}。`);
       return lastState;
     }

@@ -1574,6 +1574,25 @@ function isSuspiciousCurrencyPriceContext(text = '', start = 0) {
   return /(?:运费|邮费|快递费|配送费|shipping|freight|postage|delivery)\s*$/i.test(before);
 }
 
+function isSuspiciousPriceRangeContext(text = '', start = 0, end = start, matchText = '') {
+  const rawText = String(text || '');
+  const matchedText = String(matchText || '');
+  if (/(?:¥|￥)/.test(matchedText)) {
+    return false;
+  }
+
+  const before = rawText.slice(Math.max(0, start - 35), start);
+  const after = rawText.slice(end, Math.min(rawText.length, end + 35));
+  const context = `${before}${after}`;
+
+  if (/^\s*(件以内|个以内|只以内|支以内|片以内|条以内|盒以内|包以内|瓶以内|套以内|件|个|只|支|片|条|盒|包|瓶|套|pcs?|pieces?)/i.test(after)) {
+    return true;
+  }
+
+  return /(起批|起订|起购|起售|批量|阶梯|库存|销量|已售|成交|quantity|beginAmount|startQuantity|minimum\s*order|min\s*order|moq)/i
+    .test(context);
+}
+
 function extractFirstValidPriceFromText(text = '') {
   const rawText = String(text || '');
   const rangePatterns = [
@@ -1586,7 +1605,8 @@ function extractFirstValidPriceFromText(text = '') {
     let match = pattern.exec(rawText);
     while (match) {
       const price = extractLowestPriceFromRangeMatch(match);
-      if (price) {
+      const matchEnd = match.index + match[0].length;
+      if (price && !isSuspiciousPriceRangeContext(rawText, match.index, matchEnd, match[0])) {
         return price;
       }
       match = pattern.exec(rawText);
@@ -4964,6 +4984,32 @@ function computeSkuPriceWeightFactor(skuValue = {}, medianOriginPrice = null) {
   return clampNumber(currentOriginPrice / medianOriginPrice, 0.75, 1.35);
 }
 
+function resolvePreEditOriginPriceForHighGuard(skuValue = {}, itemInfo = {}) {
+  const rawCandidates = [
+    skuValue && skuValue.originPrice,
+    itemInfo && itemInfo.originPrice,
+    itemInfo && itemInfo.price,
+    ...Object.values(itemInfo && itemInfo.skuMap ? itemInfo.skuMap : {})
+      .map((value) => value && value.originPrice),
+  ];
+
+  const normalizedCandidates = rawCandidates
+    .map((value) => normalizeCurrencyCny(value, null))
+    .filter((value) => value !== null);
+
+  return normalizedCandidates.find((value) => !isSourcePriceTooHighForDirectUse(value))
+    || normalizedCandidates[0]
+    || '';
+}
+
+function guardFinalSkuOriginPrice(finalOriginPrice, skuValue = {}, itemInfo = {}) {
+  if (!isSourcePriceTooHighForDirectUse(finalOriginPrice)) {
+    return finalOriginPrice;
+  }
+
+  return resolvePreEditOriginPriceForHighGuard(skuValue, itemInfo);
+}
+
 function roundWeightKg(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) {
@@ -5038,13 +5084,14 @@ function cleanSkuMap(
       const finalOriginPrice = normalizedSourcePriceExtraCny
         ? applySourcePriceExtraCny(baseOriginPrice, normalizedSourcePriceExtraCny)
         : baseOriginPrice;
+      const guardedFinalOriginPrice = guardFinalSkuOriginPrice(finalOriginPrice, skuValue, itemInfo);
 
       return [
         skuKey,
         {
           ...skuValue,
           itemNum: normalizeText(skuValue.itemNum),
-          originPrice: finalOriginPrice,
+          originPrice: guardedFinalOriginPrice,
           weight: roundWeightKg(policySkuWeight) || roundWeightKg(baseWeight) || DEFAULT_FALLBACK_WEIGHT,
           shopIdToWarehouseIdAndStockMap: skuValue && skuValue.shopIdToWarehouseIdAndStockMap
             ? skuValue.shopIdToWarehouseIdAndStockMap
@@ -10079,6 +10126,7 @@ module.exports = {
   extractFreightPriceFromText,
   resolveGrossWeightFromText,
   applySourcePriceExtraCny,
+  cleanSkuMap,
   addSkuWeightPaddingKg,
   shouldOverwriteSuspiciousOriginPrice,
   isSourcePriceTooHighForDirectUse,
