@@ -839,6 +839,38 @@
         }
       }
 
+      function canResumeHistoryItem(item) {
+        return Boolean(item && ['error', 'stopped'].includes(item.status));
+      }
+
+      async function resumeHistoryRun(item) {
+        if (!canResumeHistoryItem(item) || !item.id || isRunning.value) {
+          return;
+        }
+        loading.value = true;
+        try {
+          await requestJson('/api/run/resume', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id: item.id }),
+          });
+          await fetchStatus();
+          notify('success', '恢复执行已开始。');
+        } catch (error) {
+          notify('error', normalizeApiError(error));
+        } finally {
+          loading.value = false;
+        }
+      }
+
+      function openDiagnostic(item) {
+        if (!item || !item.diagnosticId) {
+          notify('error', '暂无诊断包。');
+          return;
+        }
+        window.open(`/api/diagnostics/${encodeURIComponent(item.diagnosticId)}`, '_blank', 'noopener');
+      }
+
       function configFieldPlaceholder(field) {
         if (field && field.secret) {
           return field.placeholder || '留空则不修改';
@@ -914,6 +946,7 @@
         aiUsageItems,
         antTheme,
         buildTaskText,
+        canResumeHistoryItem,
         canSubmitCaptcha,
         captchaCode,
         clearHistory,
@@ -960,6 +993,7 @@
         numberText,
         onUseLocalEnvChange,
         onLogScroll,
+        openDiagnostic,
         pageSubtitle,
         pageTitle,
         pageLogs,
@@ -971,6 +1005,7 @@
         runMetrics,
         runSummary,
         removeConfigAccount,
+        resumeHistoryRun,
         selectedConfigAccountIndex,
         saveConfig,
         startCollectRun,
@@ -1581,6 +1616,21 @@
                           <span>{{ item.account ? maskPhoneText(item.account.label) : '-' }}</span>
                           <span class="history-dot">·</span>
                           <span>{{ formatDate(item.startedAt) }}</span>
+                          <div class="history-actions">
+                            <a-button
+                              v-if="canResumeHistoryItem(item)"
+                              type="link"
+                              size="small"
+                              :disabled="isRunning"
+                              @click="resumeHistoryRun(item)"
+                            >继续</a-button>
+                            <a-button
+                              v-if="item.diagnosticId"
+                              type="link"
+                              size="small"
+                              @click="openDiagnostic(item)"
+                            >诊断</a-button>
+                          </div>
                         </template>
                       </a-list-item-meta>
                     </a-list-item>

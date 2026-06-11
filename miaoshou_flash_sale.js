@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const puppeteer = require('puppeteer-core');
+const { FLASH_SELECTORS } = require('./lib/automation_selectors');
+const { captureBrowserArtifacts } = require('./lib/automation_artifacts');
 
 const FLASH_SALE_URL = 'https://erp.91miaoshou.com/tiktok/marketing/flashSale';
 const DEFAULT_TIMEOUT = 30000;
@@ -68,6 +70,23 @@ function getCaptchaDir() {
 
 function getRunId() {
   return String(process.env.MIAOSHOU_RUN_ID || 'manual').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+async function saveFlashFailureArtifacts(browser, context = {}, error = null) {
+  try {
+    const result = await captureBrowserArtifacts(browser, {
+      runId: getRunId(),
+      stage: context.stage || 'flash-failure',
+      label: context.label || '',
+      error,
+      limit: 3,
+    });
+    if (result && Array.isArray(result.artifacts) && result.artifacts.length > 0) {
+      log(`已保存失败页面诊断证据：${result.dir}`);
+    }
+  } catch (captureError) {
+    log(`保存失败页面诊断证据失败：${captureError.message || String(captureError)}`);
+  }
 }
 
 function safeFilePart(value = '') {
@@ -1214,12 +1233,12 @@ async function ensureActivityListPage(browser, listPage, options = {}) {
 
 async function readActivityRows(page) {
   await waitForBodyText(page, '管理产品', DEFAULT_TIMEOUT);
-  return page.evaluate(() => Array.from(document.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row'))
+  return page.evaluate((selectors) => Array.from(document.querySelectorAll(selectors.activityRows))
     .map((element, index) => ({
       index,
       text: (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim(),
     }))
-    .filter((row) => row.text && row.text.includes('管理产品')));
+    .filter((row) => row.text && row.text.includes('管理产品')), FLASH_SELECTORS);
 }
 
 function getActivityCandidates(rows, processedActivityKeys) {
@@ -1248,8 +1267,8 @@ function getUniqueActivityRows(rows, seenActivityKeys) {
 }
 
 async function resetActivityListScroll(page) {
-  await page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row'))
+  await page.evaluate((selectors) => {
+    const rows = Array.from(document.querySelectorAll(selectors.activityRows))
       .filter((element) => (element.innerText || element.textContent || '').includes('管理产品'));
     const isScrollable = (element) => element
       && element.scrollHeight > element.clientHeight + 20
@@ -1273,13 +1292,13 @@ async function resetActivityListScroll(page) {
     scroller.scrollTop = 0;
     scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
     window.dispatchEvent(new Event('scroll'));
-  });
+  }, FLASH_SELECTORS);
   await sleep(1200);
 }
 
 async function scrollActivityListToBottom(page) {
-  const state = await page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row'))
+  const state = await page.evaluate((selectors) => {
+    const rows = Array.from(document.querySelectorAll(selectors.activityRows))
       .filter((element) => (element.innerText || element.textContent || '').includes('管理产品'));
     const isScrollable = (element) => element
       && element.scrollHeight > element.clientHeight + 20
@@ -1315,7 +1334,7 @@ async function scrollActivityListToBottom(page) {
       moved: Math.abs(scroller.scrollTop - before) > 5,
       atBottom: scroller.scrollTop >= maxScrollTop - 5,
     };
-  });
+  }, FLASH_SELECTORS);
   await sleep(1500);
   return state;
 }
@@ -1739,7 +1758,7 @@ async function leaveActivityDetailPage(browser, listPage, detailPage) {
 }
 
 async function getVisibleDialogText(page, title) {
-  return page.evaluate((title) => {
+  return page.evaluate(({ title, selectors }) => {
     const isVisible = (element) => {
       if (!element || !element.getClientRects().length) return false;
       let current = element;
@@ -1752,17 +1771,17 @@ async function getVisibleDialogText(page, title) {
       }
       return true;
     };
-    const dialogs = Array.from(document.querySelectorAll('[role=dialog], .jx-dialog, .el-dialog'));
+    const dialogs = Array.from(document.querySelectorAll(selectors.dialogs));
     const dialog = dialogs.reverse().find((item) => {
       const text = item.innerText || item.textContent || '';
       return isVisible(item) && text.includes(title);
     });
     return dialog ? dialog.innerText || dialog.textContent || '' : '';
-  }, title);
+  }, { title, selectors: FLASH_SELECTORS });
 }
 
 async function getDialogProductState(page, title) {
-  return page.evaluate((title) => {
+  return page.evaluate(({ title, selectors }) => {
     const isVisible = (element) => {
       if (!element || !element.getClientRects().length) return false;
       let current = element;
@@ -1775,12 +1794,12 @@ async function getDialogProductState(page, title) {
       }
       return true;
     };
-    const dialogs = Array.from(document.querySelectorAll('[role=dialog], .jx-dialog, .el-dialog'));
+    const dialogs = Array.from(document.querySelectorAll(selectors.dialogs));
     const dialog = dialogs.reverse().find((item) => isVisible(item) && (item.innerText || item.textContent || '').includes(title));
     if (!dialog) {
       return { text: '', rows: [] };
     }
-    const rows = Array.from(dialog.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row, tr'))
+    const rows = Array.from(dialog.querySelectorAll(selectors.productRows))
       .filter(isVisible)
       .map((element, index) => ({
         index,
@@ -1791,11 +1810,11 @@ async function getDialogProductState(page, title) {
       text: dialog.innerText || dialog.textContent || '',
       rows,
     };
-  }, title);
+  }, { title, selectors: FLASH_SELECTORS });
 }
 
 async function getDialogSelectionState(page, title) {
-  return page.evaluate((title) => {
+  return page.evaluate(({ title, selectors }) => {
     const isVisible = (element) => {
       if (!element || !element.getClientRects().length) return false;
       let current = element;
@@ -1820,22 +1839,22 @@ async function getDialogSelectionState(page, title) {
         || /\bselected\b/.test(className);
     };
 
-    const dialogs = Array.from(document.querySelectorAll('[role=dialog], .jx-dialog, .el-dialog'));
+    const dialogs = Array.from(document.querySelectorAll(selectors.dialogs));
     const dialog = dialogs.reverse().find((item) => isVisible(item) && (item.innerText || item.textContent || '').includes(title));
     if (!dialog) {
       return { text: '', visibleRows: 0, selectedRows: 0, checkedControls: 0 };
     }
 
     const text = normalize(dialog.innerText || dialog.textContent || '');
-    const rows = Array.from(dialog.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row, tr'))
+    const rows = Array.from(dialog.querySelectorAll(selectors.productRows))
       .filter(isVisible)
       .filter((row) => /(?:产品|商品)ID[:：]/.test(row.innerText || row.textContent || ''));
     const selectedRows = rows.filter((row) => {
       if (hasCheckedMark(row)) return true;
-      return Array.from(row.querySelectorAll('input[type="checkbox"], [role="checkbox"], *[class*="checkbox"]'))
+      return Array.from(row.querySelectorAll(selectors.checkboxControls))
         .some((element) => isVisible(element) && hasCheckedMark(element));
     }).length;
-    const checkedControls = Array.from(dialog.querySelectorAll('input[type="checkbox"]:checked, [aria-checked="true"], .is-checked'))
+    const checkedControls = Array.from(dialog.querySelectorAll(selectors.checkedControls))
       .filter((element) => isVisible(element))
       .length;
 
@@ -1845,7 +1864,7 @@ async function getDialogSelectionState(page, title) {
       selectedRows,
       checkedControls,
     };
-  }, title);
+  }, { title, selectors: FLASH_SELECTORS });
 }
 
 async function waitForDialogProductsLoaded(page, title, timeout = 60000) {
@@ -1931,7 +1950,7 @@ async function ensureAddProductExclusionFilters(page, title = '添加产品') {
   for (const labelText of ADD_PRODUCT_EXCLUSION_FILTER_LABELS) {
     let state = { found: false, checked: false, clicked: false };
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      state = await page.evaluate(({ title, labelText }) => {
+      state = await page.evaluate(({ title, labelText, selectors }) => {
         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
         const classText = (element) => {
           if (!element) return '';
@@ -1950,13 +1969,13 @@ async function ensureAddProductExclusionFilters(page, title = '添加产品') {
           }
           return true;
         };
-        const dialogs = Array.from(document.querySelectorAll('[role=dialog], .jx-dialog, .el-dialog'));
+        const dialogs = Array.from(document.querySelectorAll(selectors.dialogs));
         const dialog = dialogs.reverse().find((item) => isVisible(item) && normalize(item.innerText || item.textContent || '').includes(title));
         if (!dialog) {
           return { found: false, checked: false, clicked: false };
         }
 
-        const labelCandidates = Array.from(dialog.querySelectorAll('label, span, div'))
+        const labelCandidates = Array.from(dialog.querySelectorAll(selectors.labelTextNodes))
           .filter(isVisible)
           .filter((element) => {
             const text = normalize(element.innerText || element.textContent || '');
@@ -1973,7 +1992,7 @@ async function ensureAddProductExclusionFilters(page, title = '添加产品') {
           || label;
         const stateElements = [
           wrapper,
-          ...Array.from(wrapper.querySelectorAll('input[type="checkbox"], [role="checkbox"], .el-checkbox__input, .ant-checkbox, .jx-checkbox, [class*="checkbox"]')),
+          ...Array.from(wrapper.querySelectorAll(selectors.checkboxControls)),
         ].filter(Boolean);
         const checked = stateElements.some((element) => {
           if (element.matches && element.matches('input[type="checkbox"]')) {
@@ -1994,7 +2013,7 @@ async function ensureAddProductExclusionFilters(page, title = '添加产品') {
         wrapper.scrollIntoView({ block: 'center', inline: 'center' });
         wrapper.click();
         return { found: true, checked: false, clicked: true };
-      }, { title, labelText });
+      }, { title, labelText, selectors: FLASH_SELECTORS });
 
       if (!state.found || state.checked) {
         break;
@@ -3435,35 +3454,44 @@ async function processActivity(browser, listPage, activity, runState) {
 
 async function run() {
   const args = parseArgs();
-  const browser = await puppeteer.launch({
-    executablePath: getChromeExecutablePath(),
-    headless: args.headless,
-    userDataDir: getProfileDir(),
-    defaultViewport: null,
-    args: [
-      `--window-size=${DEFAULT_BROWSER_WINDOW_WIDTH},${DEFAULT_BROWSER_WINDOW_HEIGHT}`,
-      '--start-maximized',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-features=Translate',
-    ],
-  });
-
+  let browser = null;
   const results = [];
   const processedActivityKeys = new Set();
   const runState = {
     completed: 0,
     total: args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? 0 : args.count,
   };
+  const failureContext = {
+    stage: 'launch',
+    label: '启动浏览器',
+  };
 
   try {
+    browser = await puppeteer.launch({
+      executablePath: getChromeExecutablePath(),
+      headless: args.headless,
+      userDataDir: getProfileDir(),
+      defaultViewport: null,
+      args: [
+        `--window-size=${DEFAULT_BROWSER_WINDOW_WIDTH},${DEFAULT_BROWSER_WINDOW_HEIGHT}`,
+        '--start-maximized',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-features=Translate',
+      ],
+    });
+
     const pages = await browser.pages();
     let listPage = pages[0] || await browser.newPage();
     listPage.setDefaultTimeout(DEFAULT_TIMEOUT);
     listPage.setDefaultNavigationTimeout(DEFAULT_TIMEOUT);
     await ensureLargeBrowserViewport(listPage);
 
+    failureContext.stage = 'login';
+    failureContext.label = '登录妙手';
     await ensureLoggedIn(listPage);
+    failureContext.stage = 'activity-list';
+    failureContext.label = '秒杀活动列表';
     await listPage.goto(FLASH_SALE_URL, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT });
     await waitForFlashSaleListReady(listPage, DEFAULT_TIMEOUT);
     const runningState = await clickRunningTab(listPage);
@@ -3487,6 +3515,8 @@ async function run() {
     });
 
     for (const target of activityQueue) {
+      failureContext.stage = 'process-activity';
+      failureContext.label = target.activity.title || target.activity.id || '秒杀活动';
       listPage = await ensureActivityListPage(browser, listPage, { quiet: true, resetScroll: true });
       log('已回到最开始的秒杀活动列表页，准备寻找下一个活动。');
 
@@ -3518,8 +3548,13 @@ async function run() {
       mode: 'flash-sale',
       results,
     }));
+  } catch (error) {
+    await saveFlashFailureArtifacts(browser, failureContext, error);
+    throw error;
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
 }
 

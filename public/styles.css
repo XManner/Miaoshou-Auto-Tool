@@ -847,6 +847,13 @@ body {
   color: var(--app-muted);
 }
 
+.history-actions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: 12px;
+  vertical-align: middle;
+}
+
 :root[data-theme="tech"] .soft-card,
 :root[data-theme="tech"] .summary-box,
 :root[data-theme="tech"] .captcha-panel,

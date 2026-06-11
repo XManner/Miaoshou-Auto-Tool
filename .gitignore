@@ -18,6 +18,8 @@ temp/
 .cache/
 .captcha/
 .miaoshou-browser/
+.run-history.json
+.diagnostics/
 
 # Local reports / exports that may contain shop or product data
 *_report.json
