@@ -2227,33 +2227,103 @@ async function handleAddProducts(page, activity) {
   return { added, popupProductCount };
 }
 
+async function isProductPageSize1000Selected(page) {
+  return page.evaluate(() => {
+    const normalize = (value) => String(value || '').replace(/\s+/g, '').trim();
+    const isVisible = (element) => {
+      if (!element || !element.getClientRects().length) return false;
+      let current = element;
+      while (current && current !== document.body) {
+        const style = window.getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+    return Array.from(document.querySelectorAll('span, div, input'))
+      .filter((element) => !element.closest('[role=dialog], .jx-dialog, .el-dialog'))
+      .filter(isVisible)
+      .some((element) => /^1000条\/页$/.test(normalize(element.innerText || element.textContent || element.value || '')));
+  });
+}
+
+async function waitForPageSize1000Selected(page, timeout = 20000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    if (await isProductPageSize1000Selected(page)) {
+      return true;
+    }
+    await sleep(500);
+  }
+  throw new Error('等待商品列表分页切换到 1000 条/页超时，已停止避免全选旧列表。');
+}
+
 async function selectPageSize1000(page) {
-  const text = await bodyText(page);
-  if (text.includes('1000条/页')) {
+  if (await isProductPageSize1000Selected(page)) {
+    log('商品列表分页已是 1000 条/页，等待列表稳定。');
+    await waitForFilteredProductListStable(page, 60000);
     return true;
   }
 
   const clicked = await page.evaluate(() => {
-    const elements = Array.from(document.querySelectorAll('span, div, input'));
-    const element = elements.find((item) => /\d+条\/页/.test((item.innerText || item.textContent || item.value || '').trim()));
+    const normalize = (value) => String(value || '').replace(/\s+/g, '').trim();
+    const isVisible = (element) => {
+      if (!element || !element.getClientRects().length) return false;
+      let current = element;
+      while (current && current !== document.body) {
+        const style = window.getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+    const elements = Array.from(document.querySelectorAll('span, div, input'))
+      .filter((element) => !element.closest('[role=dialog], .jx-dialog, .el-dialog'))
+      .filter(isVisible);
+    const element = elements.find((item) => /^\d+条\/页$/.test(normalize(item.innerText || item.textContent || item.value || '')));
     if (!element) return false;
     element.scrollIntoView({ block: 'center', inline: 'center' });
     element.click();
     return true;
   });
-  if (!clicked) return false;
+  if (!clicked) {
+    throw new Error('没有找到商品列表分页大小下拉框。');
+  }
   await sleep(800);
 
   const optionClicked = await page.evaluate(() => {
-    const elements = Array.from(document.querySelectorAll('li, span, div'));
-    const element = elements.find((item) => (item.innerText || item.textContent || '').trim() === '1000条/页');
+    const normalize = (value) => String(value || '').replace(/\s+/g, '').trim();
+    const isVisible = (element) => {
+      if (!element || !element.getClientRects().length) return false;
+      let current = element;
+      while (current && current !== document.body) {
+        const style = window.getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+    const elements = Array.from(document.querySelectorAll('li, span, div')).filter(isVisible);
+    const element = elements.find((item) => normalize(item.innerText || item.textContent || '') === '1000条/页');
     if (!element) return false;
     element.scrollIntoView({ block: 'center', inline: 'center' });
     element.click();
     return true;
   });
-  await sleep(1500);
-  return optionClicked;
+  if (!optionClicked) {
+    throw new Error('没有找到 1000 条/页选项。');
+  }
+
+  await waitForPageSize1000Selected(page, 20000);
+  log('已确认商品列表分页切换为 1000 条/页，等待列表刷新完成。');
+  await waitForFilteredProductListStable(page, 60000);
+  return true;
 }
 
 async function ensureUnpricedFilter(page) {
@@ -2405,6 +2475,9 @@ async function waitForProductRowsOrEmpty(page, timeout = 60000) {
 }
 
 async function selectAllFilteredProducts(page) {
+  await waitForUnpricedFilterChecked(page, 5000);
+  await waitForFilteredProductListStable(page, 20000);
+
   const clicked = await page.evaluate(() => {
     const headers = Array.from(document.querySelectorAll('th, .pro-virtual-table__header, .pro-table__header, div'));
     const productHeader = headers.find((item) => (item.innerText || item.textContent || '').includes('产品信息'));
@@ -3401,9 +3474,7 @@ async function processActivity(browser, listPage, activity, runState) {
       : '重试添加产品流程完成，停留 1 秒后再勾选“仅展示未设置秒杀价产品”。');
     await sleep(1000);
 
-    await selectPageSize1000(detailPage).catch((error) => {
-      log(`设置 1000 条/页失败，继续尝试后续步骤：${error.message}`);
-    });
+    await selectPageSize1000(detailPage);
     await ensureUnpricedFilter(detailPage);
     const { text: textAfterFilter, rows: productRows } = await waitForProductRowsOrEmpty(detailPage, 60000);
     lastUnpricedProducts = productRows.length;
