@@ -19,6 +19,7 @@ temp/
 .captcha/
 .miaoshou-browser/
 .run-history.json
+.collection-dedupe.json
 .diagnostics/
 
 # Local reports / exports that may contain shop or product data

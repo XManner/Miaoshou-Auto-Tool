@@ -5,6 +5,11 @@ const path = require('path');
 const source = fs.readFileSync(path.join(__dirname, '..', 'miaoshou_flash_sale.js'), 'utf8');
 
 assert.ok(
+  source.includes('const FLASH_SAFE_STEP_DELAY_MS = 500'),
+  'Flash sale flow buffer delay should be 500ms.',
+);
+
+assert.ok(
   source.includes('function isFilteredProductListRefreshReady'),
   'Flash sale script should use a named readiness helper for filtered product lists.',
 );
@@ -44,9 +49,29 @@ assert.ok(
   'Filtered-list wait loop should use the readiness helper instead of blocking on any loading text.',
 );
 
+const waitDialogGoneSource = source.slice(
+  source.indexOf('async function waitForDialogGone'),
+  source.indexOf('async function getActivityProductListState'),
+);
+
+assert.ok(
+  waitDialogGoneSource.includes('throw new Error')
+    && waitDialogGoneSource.includes('弹窗没有关闭'),
+  'Waiting for a dialog to close should throw on timeout so the flow cannot continue behind an open modal.',
+);
+
+assert.ok(
+  !source.includes("waitForDialogGone(page, '添加产品', 10000).catch(() => {})"),
+  'Add-product dialog cancellation should not swallow dialog-close failures.',
+);
+
 const pageSizeSource = source.slice(
   source.indexOf('async function selectPageSize1000'),
   source.indexOf('async function ensureUnpricedFilter'),
+);
+const unpricedFilterSource = source.slice(
+  source.indexOf('async function ensureUnpricedFilter'),
+  source.indexOf('async function waitForUnpricedFilterChecked'),
 );
 
 assert.ok(
@@ -60,6 +85,16 @@ assert.ok(
   'Changing product page size to 1000/page should wait for both the selected page-size control and the refreshed list.',
 );
 
+assert.ok(
+  pageSizeSource.includes('getProductPageSizeTriggerPoint')
+    && pageSizeSource.includes('getProductPageSizeOptionPoint')
+    && pageSizeSource.includes('await page.mouse.click(triggerPoint.x, triggerPoint.y)')
+    && pageSizeSource.includes('await page.mouse.click(optionPoint.x, optionPoint.y)')
+    && pageSizeSource.includes('.jx-select-dropdown__item')
+    && pageSizeSource.includes('[role=option]'),
+  'Changing product page size to 1000/page should click the real select trigger and dropdown option instead of only clicking text nodes.',
+);
+
 const processActivitySource = source.slice(
   source.indexOf('async function processActivity'),
   source.indexOf('async function run'),
@@ -68,8 +103,24 @@ const processActivitySource = source.slice(
 assert.ok(
   processActivitySource.includes('await selectPageSize1000(detailPage);')
     && processActivitySource.includes('await ensureUnpricedFilter(detailPage);')
-    && processActivitySource.indexOf('await selectPageSize1000(detailPage);') < processActivitySource.indexOf('await ensureUnpricedFilter(detailPage);'),
-  'Flash sale processing should set and confirm 1000/page before enabling the unpriced filter.',
+    && processActivitySource.indexOf('await ensureUnpricedFilter(detailPage);') < processActivitySource.indexOf('await selectPageSize1000(detailPage);'),
+  'Flash sale processing should enable and confirm the unpriced filter before switching the filtered list to 1000/page.',
+);
+
+assert.ok(
+  processActivitySource.includes('await sleep(FLASH_SAFE_STEP_DELAY_MS);')
+    && unpricedFilterSource.includes('await sleep(FLASH_SAFE_STEP_DELAY_MS);'),
+  'Flash sale flow buffer waits should use the shared 500ms delay.',
+);
+
+const filterIndex = processActivitySource.indexOf('await ensureUnpricedFilter(detailPage);');
+const filteredRowsIndex = processActivitySource.indexOf('waitForProductRowsOrEmpty(detailPage, 60000)', filterIndex);
+const pageSizeIndex = processActivitySource.indexOf('await selectPageSize1000(detailPage);');
+assert.ok(
+  filterIndex >= 0
+    && filteredRowsIndex > filterIndex
+    && pageSizeIndex > filteredRowsIndex,
+  'Flash sale processing should check whether the filtered list is empty before trying to switch it to 1000/page.',
 );
 
 assert.ok(

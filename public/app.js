@@ -31,6 +31,10 @@
     return `${DOCUMENT_TITLE_PREFIX}丨${title}`;
   }
 
+  function normalizeThemeName(value) {
+    return THEME_OPTIONS.some((item) => item.value === value) ? value : THEME_OPTIONS[0].value;
+  }
+
   function maskPhoneText(value) {
     return String(value || '').replace(/(\d{3})\d{4}(\d{4})/g, '$1****$2');
   }
@@ -337,6 +341,16 @@
     return 'log-line';
   }
 
+  function historyPageForRun(run) {
+    if (runHasCollectTask(run)) {
+      return 'collect';
+    }
+    if (runHasFlashTask(run) && !runHasEditTask(run)) {
+      return 'flash';
+    }
+    return 'products';
+  }
+
   function normalizeApiError(error) {
     return maskPhoneText(error && error.message ? error.message : String(error || '请求失败'));
   }
@@ -344,12 +358,13 @@
   const app = createApp({
     setup() {
       const currentPage = ref(window.localStorage.getItem('miaoshou-active-page') || 'home');
-      const themeName = ref(window.localStorage.getItem('miaoshou-theme') || 'commerce');
+      const themeName = ref(normalizeThemeName(window.localStorage.getItem('miaoshou-theme') || 'commerce'));
       const accounts = ref([]);
       const configStatus = ref({ sections: [], envPath: '' });
       const useLocalEnv = ref(true);
       const currentRun = ref(null);
       const history = ref([]);
+      const serverCapabilities = ref({ collectSources: [] });
       const statusTimer = ref(null);
       const captchaCode = ref('');
       const logBox = ref(null);
@@ -379,6 +394,9 @@
         links: '',
         count: 10,
         maxPriceCny: 10,
+        amazonMaxPriceUsd: 10000,
+        amazonMinRating: 0,
+        amazonMinReviewCount: 0,
         preferredTerms: '',
         excludedTerms: '',
         minScore: 50,
@@ -412,7 +430,7 @@
       const pageTitle = computed(() => PAGE_TITLES[currentPage.value] || PAGE_TITLES.home);
       const pageSubtitle = computed(() => {
         if (currentPage.value === 'collect') {
-          return '在 1688 筛选低风险商品，并通过妙手开放 API 采集到 TikTok 采集箱。';
+          return '从 1688 或 Amazon.com 筛选商品，并通过妙手开放 API 采集到 TikTok 采集箱。';
         }
         if (currentPage.value === 'products') {
           return '编辑优化商品，可选择是否发布，并可继续执行秒杀活动。';
@@ -446,6 +464,11 @@
         .split(/[\s,，、]+/)
         .map((item) => item.trim())
         .filter(Boolean));
+      const supportsAmazonCollection = computed(() => {
+        const capabilities = serverCapabilities.value || {};
+        const sources = Array.isArray(capabilities.collectSources) ? capabilities.collectSources : [];
+        return Boolean(capabilities.amazonCollection && sources.includes('amazon'));
+      });
       const configSections = computed(() => (
         configStatus.value && Array.isArray(configStatus.value.sections)
           ? configStatus.value.sections
@@ -486,18 +509,33 @@
         const targetCount = collectForm.mode === 'links'
           ? collectLinkList.value.length
           : Math.max(1, Number(collectForm.count || 1));
+        if (collectForm.source === 'amazon') {
+          if (collectForm.mode === 'links') {
+            return `使用 ${account}，Amazon.com 链接/ASIN 采集 ${targetCount} 个商品。`;
+          }
+          return `使用 ${account}，Amazon.com 关键词采集 ${targetCount} 个商品，最高展示价 ${collectForm.amazonMaxPriceUsd} USD，最低评分 ${collectForm.amazonMinRating}。`;
+        }
         if (collectForm.mode === 'links') {
           return `使用 ${account}，链接采集 ${targetCount} 个详情链接。`;
         }
         return `使用 ${account}，自动采集 ${targetCount} 个 1688 商品，最高采购价 ${collectForm.maxPriceCny} 元，最低评分 ${collectForm.minScore}。`;
       });
       const collectAlertMessage = computed(() => {
+        if (collectForm.source === 'amazon') {
+          return collectForm.mode === 'links' ? 'Amazon 链接/ASIN 采集' : 'Amazon.com 关键词采集';
+        }
         if (collectForm.mode === 'links') {
           return '1688 链接采集';
         }
         return '1688 自动采集';
       });
       const collectAlertDescription = computed(() => {
+        if (collectForm.source === 'amazon') {
+          if (collectForm.mode === 'links') {
+            return '粘贴 Amazon.com 商品链接或 ASIN，系统会整理为美国站商品链接，并通过妙手开放 API 采集到 TikTok 采集箱。';
+          }
+          return '按关键词打开 Amazon.com 搜索页，按展示价、评分、评论数和排除词做轻量筛选，再通过妙手开放 API 采集到 TikTok 采集箱。';
+        }
         if (collectForm.mode === 'links') {
           return '粘贴 1688 商品详情链接，系统会逐个打开详情页校验价格和风险词，合格后通过妙手开放 API 采集并认领到 TikTok 采集箱。';
         }
@@ -509,8 +547,12 @@
       });
 
       function applyTheme() {
-        document.documentElement.dataset.theme = themeName.value;
-        window.localStorage.setItem('miaoshou-theme', themeName.value);
+        const normalized = normalizeThemeName(themeName.value);
+        if (themeName.value !== normalized) {
+          themeName.value = normalized;
+        }
+        document.documentElement.dataset.theme = normalized;
+        window.localStorage.setItem('miaoshou-theme', normalized);
       }
 
       function setCurrentPage(page) {
@@ -666,6 +708,9 @@
       async function fetchStatus() {
         try {
           const payload = await requestJson('/api/status');
+          serverCapabilities.value = payload.capabilities && typeof payload.capabilities === 'object'
+            ? payload.capabilities
+            : { collectSources: ['1688'], amazonCollection: false };
           currentRun.value = payload.currentRun || null;
           history.value = Array.isArray(payload.history) ? payload.history : [];
           if (!currentRun.value || !currentRun.value.captcha || currentRun.value.captcha.status !== 'waiting') {
@@ -706,10 +751,15 @@
             edit: false,
             flash: false,
           },
-          collectSource: '1688',
+          collectSource: collectForm.source,
           collectShopeeSite: 'my',
           collectShopeeMaxPrice: 10000,
           collectShopeeMaxMoq: 3,
+          collectAmazonMode: collectForm.source === 'amazon' ? (collectForm.mode === 'links' ? 'links' : 'keyword') : '',
+          collectAmazonMarketplace: 'us',
+          collectAmazonMaxPriceUsd: Number(collectForm.amazonMaxPriceUsd || 0),
+          collectAmazonMinRating: Math.max(0, Number(collectForm.amazonMinRating || 0)),
+          collectAmazonMinReviewCount: Math.max(0, Number(collectForm.amazonMinReviewCount || 0)),
           collectKeywords: collectForm.mode === 'auto' ? collectForm.keywords : '',
           collectLinks: collectForm.mode === 'links' ? collectForm.links : '',
           collectCount,
@@ -736,11 +786,14 @@
       async function startCollectRun() {
         loading.value = true;
         try {
+          if (collectForm.source === 'amazon' && !supportsAmazonCollection.value) {
+            throw new Error('当前后台服务还没有加载 Amazon 采集能力，请先重启本地工作台后再开始采集。');
+          }
           if (collectForm.mode === 'auto' && !String(collectForm.keywords || '').trim()) {
-            throw new Error('自动采集需要先填写关键词。');
+            throw new Error(collectForm.source === 'amazon' ? 'Amazon 关键词采集需要先填写关键词。' : '自动采集需要先填写关键词。');
           }
           if (collectForm.mode === 'links' && collectLinkList.value.length === 0) {
-            throw new Error('链接采集需要先粘贴 1688 详情链接。');
+            throw new Error(collectForm.source === 'amazon' ? '链接/ASIN 采集需要先粘贴 Amazon 商品链接或 ASIN。' : '链接采集需要先粘贴 1688 详情链接。');
           }
           await requestJson('/api/run', {
             method: 'POST',
@@ -1015,6 +1068,7 @@
         stopRun,
         submitCaptcha,
         successfulCount,
+        supportsAmazonCollection,
         switchPage,
         themeName,
         useLocalEnv,
@@ -1029,7 +1083,7 @@
               <div class="brand-block top-brand">
                 <div class="brand-copy">
                   <img class="brand-logo" src="/assets/tiktok-shop-logo.png" alt="TikTok Shop">
-                  <p>妙手自动化工作台</p>
+                  <p class="brand-subtitle">妙手自动化工作台</p>
                 </div>
               </div>
               <a-menu :selected-keys="[currentPage]" mode="horizontal" class="top-menu" @click="goPage">
@@ -1094,10 +1148,10 @@
                   <div>
                     <div class="eyebrow">工作台能力</div>
                     <h2>功能概览</h2>
-                    <p>围绕 TikTok Shop 东南亚店铺，把 1688 选品、妙手采集、商品编辑发布和秒杀活动串成一条可执行流程。</p>
+                    <p>围绕 TikTok Shop 东南亚店铺，把 1688 / Amazon 选品、妙手采集、商品编辑发布和秒杀活动串成一条可执行流程。</p>
                   </div>
                   <div class="flow-strip">
-                    <span>1688 选品</span>
+                    <span>1688 / Amazon 选品</span>
                     <span>妙手采集箱</span>
                     <span>编辑发布</span>
                     <span>秒杀活动</span>
@@ -1107,8 +1161,8 @@
                 <div class="feature-grid">
                   <article class="feature-card">
                     <div class="feature-kicker">选品到采集箱</div>
-                    <h3>采集 1688 商品</h3>
-                    <p>按关键词搜索商品，支持最高采购价、优先词、排除词和安全模式过滤，合格后通过妙手开放 API 采集并认领到 TikTok 采集箱。</p>
+                    <h3>采集 1688 / Amazon 商品</h3>
+                    <p>按关键词或链接搜索商品，1688 支持采购价和安全模式过滤，Amazon.com 支持美元价、评分、评论数和 ASIN 链接采集。</p>
                     <a-button type="primary" @click="navigateToPage('collect')">进入商品采集</a-button>
                   </article>
                   <article class="feature-card">
@@ -1135,6 +1189,12 @@
                     :description="collectAlertDescription"
                   />
                   <a-form layout="vertical" class="task-form">
+                    <a-form-item label="采集来源" class="form-section form-section-choice">
+                      <a-radio-group v-model:value="collectForm.source" button-style="solid" class="large-radio-group">
+                        <a-radio-button value="1688">1688</a-radio-button>
+                        <a-radio-button value="amazon" :disabled="!supportsAmazonCollection">Amazon.com</a-radio-button>
+                      </a-radio-group>
+                    </a-form-item>
                     <a-form-item label="采集模式" class="form-section form-section-choice">
                       <a-radio-group v-model:value="collectForm.mode" button-style="solid" class="large-radio-group">
                         <a-radio-button value="auto">自动采集</a-radio-button>
@@ -1142,15 +1202,23 @@
                       </a-radio-group>
                     </a-form-item>
                     <a-form-item v-if="collectForm.mode === 'auto'" label="关键词" class="form-section">
-                      <a-textarea v-model:value="collectForm.keywords" :rows="2" placeholder="防晒帽, 防晒冰袖, 防晒面罩" />
+                      <a-textarea
+                        v-model:value="collectForm.keywords"
+                        :rows="2"
+                        :placeholder="collectForm.source === 'amazon' ? 'phone stand, collagen cream, travel organizer' : '防晒帽, 防晒冰袖, 防晒面罩'"
+                      />
                     </a-form-item>
                     <a-form-item
                       v-if="collectForm.mode === 'links'"
-                      label="1688 详情链接"
+                      :label="collectForm.source === 'amazon' ? 'Amazon 链接或 ASIN' : '1688 详情链接'"
                       class="form-section"
-                      :extra="'每行一个链接；当前识别到 ' + collectLinkList.length + ' 个有效链接。'"
+                      :extra="collectForm.source === 'amazon' ? '每行一个 Amazon 商品链接或 ASIN；当前识别到 ' + collectLinkList.length + ' 个有效输入。' : '每行一个链接；当前识别到 ' + collectLinkList.length + ' 个有效链接。'"
                     >
-                      <a-textarea v-model:value="collectForm.links" :rows="3" placeholder="https://detail.1688.com/offer/923280275684.html" />
+                      <a-textarea
+                        v-model:value="collectForm.links"
+                        :rows="3"
+                        :placeholder="collectForm.source === 'amazon' ? 'https://www.amazon.com/dp/B08N5WRWNW\\nB0C123ABCD' : 'https://detail.1688.com/offer/923280275684.html'"
+                      />
                     </a-form-item>
                     <div v-if="collectForm.mode === 'auto'" class="collect-auto-filter-panel">
                       <a-row :gutter="16" class="form-section form-section-pricing">
@@ -1159,30 +1227,50 @@
                             <a-input-number v-model:value="collectForm.count" :min="1" :max="100" size="large" class="full-width" />
                           </a-form-item>
                         </a-col>
-                        <a-col :xs="24" :sm="8">
+                        <a-col v-if="collectForm.source !== 'amazon'" :xs="24" :sm="8">
                           <a-form-item label="最高采购价">
                             <a-input-number v-model:value="collectForm.maxPriceCny" :min="0.01" :max="10000" :precision="2" addon-after="元" size="large" class="full-width" />
                           </a-form-item>
                         </a-col>
-                        <a-col :xs="24" :sm="8">
+                        <a-col v-if="collectForm.source === 'amazon'" :xs="24" :sm="8">
+                          <a-form-item label="最高展示价">
+                            <a-input-number v-model:value="collectForm.amazonMaxPriceUsd" :min="0.01" :max="10000" :precision="2" addon-after="USD" size="large" class="full-width" />
+                          </a-form-item>
+                        </a-col>
+                        <a-col v-if="collectForm.source !== 'amazon'" :xs="24" :sm="8">
                           <a-form-item label="最低评分">
                             <a-input-number v-model:value="collectForm.minScore" :min="0" :max="100" size="large" class="full-width" />
                           </a-form-item>
                         </a-col>
+                        <a-col v-if="collectForm.source === 'amazon'" :xs="24" :sm="8">
+                          <a-form-item label="最低评分">
+                            <a-input-number v-model:value="collectForm.amazonMinRating" :min="0" :max="5" :precision="1" size="large" class="full-width" />
+                          </a-form-item>
+                        </a-col>
                       </a-row>
                       <a-row :gutter="16" class="form-section">
-                        <a-col :xs="24" :md="12">
+                        <a-col v-if="collectForm.source === 'amazon'" :xs="24" :md="12">
+                          <a-form-item label="最低评论数">
+                            <a-input-number v-model:value="collectForm.amazonMinReviewCount" :min="0" :max="1000000" size="large" class="full-width" />
+                          </a-form-item>
+                        </a-col>
+                        <a-col v-if="collectForm.source !== 'amazon'" :xs="24" :md="12">
                           <a-form-item label="优先采集词">
                             <a-textarea v-model:value="collectForm.preferredTerms" :rows="3" placeholder="防晒帽, 冰袖, 面罩, 遮阳伞" />
                           </a-form-item>
                         </a-col>
                         <a-col :xs="24" :md="12">
                           <a-form-item label="排除词">
-                            <a-textarea v-model:value="collectForm.excludedTerms" :rows="3" placeholder="防晒霜, 防晒喷雾, 美白, 大牌同款" />
+                            <a-textarea
+                              v-model:value="collectForm.excludedTerms"
+                              :rows="3"
+                              :placeholder="collectForm.source === 'amazon' ? 'sponsored, renewed, used' : '防晒霜, 防晒喷雾, 美白, 大牌同款'"
+                            />
                           </a-form-item>
                         </a-col>
                       </a-row>
                       <a-form-item
+                        v-if="collectForm.source !== 'amazon'"
                         label="安全模式"
                         class="form-section form-section-switches"
                         extra="安全模式会强制拦截防晒霜/喷雾/乳液、功效宣称、仿牌等高风险商品。"

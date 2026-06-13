@@ -34,10 +34,29 @@ assert.ok(
   'Server should validate collection task options.',
 );
 assert.ok(
-  serverSource.includes('collectSource: normalizeCollectSource')
+  serverSource.includes('function buildServerCapabilities()')
+    && serverSource.includes('collectSources: [COLLECT_SOURCE_1688, COLLECT_SOURCE_AMAZON]')
+    && serverSource.includes('amazonCollection: true')
+    && serverSource.includes('capabilities: buildServerCapabilities()'),
+  'Server status should expose collection source capabilities so the UI can detect stale servers.',
+);
+assert.ok(
+  (serverSource.includes('collectSource: normalizeCollectSource') || serverSource.includes('const collectSource = normalizeCollectSource'))
     && serverSource.includes('collectShopeeSite: normalizeShopeeSite')
     && serverSource.includes('collectShopeeMaxPrice: normalizeCollectNumber'),
   'Server should validate Shopee automatic collection options.',
+);
+assert.ok(
+  serverSource.includes("const COLLECT_SOURCE_AMAZON = 'amazon'")
+    && /normalized === COLLECT_SOURCE_AMAZON/.test(serverSource),
+  'Server should accept Amazon as a collection source.',
+);
+assert.ok(
+  serverSource.includes('collectAmazonMode')
+    && serverSource.includes('collectAmazonMaxPriceUsd')
+    && serverSource.includes('collectAmazonMinRating')
+    && serverSource.includes('collectAmazonMinReviewCount'),
+  'Server should validate and serialize Amazon collection options.',
 );
 assert.ok(
   serverSource.includes('function startCollectRun(options)'),
@@ -65,6 +84,19 @@ assert.ok(
     && serverSource.includes("'--shopee-max-price'")
     && serverSource.includes("'--shopee-max-moq'"),
   'Collection command should pass Shopee automatic collection parameters to the script.',
+);
+assert.ok(
+  serverSource.includes("'--amazon-mode'")
+    && serverSource.includes("'--amazon-max-price-usd'")
+    && serverSource.includes("'--amazon-min-rating'")
+    && serverSource.includes("'--amazon-min-review-count'"),
+  'Collection command should pass Amazon browser collection parameters to the script.',
+);
+assert.ok(
+  serverSource.includes('Amazon.com')
+    && serverSource.includes('collectAmazonMode ===')
+    && serverSource.includes('Amazon 最低评分'),
+  'Collection logs should describe Amazon collection mode and filters.',
 );
 assert.ok(
   serverSource.includes('collectKeywords') && serverSource.includes('collectMaxPriceCny'),

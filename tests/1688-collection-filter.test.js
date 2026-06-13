@@ -8,6 +8,7 @@ const {
   DEFAULT_COLLECT_OPTIONS,
   COMMON_COLLECT_CLAIMED_PATH,
   COMMON_COLLECT_FETCH_ITEM_PATH,
+  buildCollectLinkRetryOptions,
   collectSourceLinksWithMiaoshouApi,
   detectShopeeAccessBlock,
   evaluateCandidate,
@@ -15,6 +16,7 @@ const {
   extractFreightPriceFromText,
   extractProductUnitPriceFromText,
   isMiaoshouServiceUnavailableError,
+  normalizeOptions,
   normalizeSearchCandidateRecords,
   normalizeSourceLinks,
   parseArgs,
@@ -81,6 +83,86 @@ assert.deepStrictEqual(DEFAULT_COLLECT_OPTIONS.preferredTerms, [], 'Default pref
 assert.deepStrictEqual(DEFAULT_COLLECT_OPTIONS.excludedTerms, [], 'Default excluded terms should be empty.');
 assert.strictEqual(DEFAULT_COLLECT_OPTIONS.safeMode, false, 'Safe mode should be disabled by default.');
 assert.strictEqual(DEFAULT_COLLECT_OPTIONS.minScore, 50, 'Default minimum score should be 50.');
+
+const amazonOptions = normalizeOptions({
+  source: 'amazon',
+  amazonMode: 'links',
+  links: 'B08N5WRWNW https://www.amazon.com/dp/B0C123ABCD?tag=x',
+  amazonMaxPriceUsd: '35.5',
+  amazonMinRating: '4.2',
+  amazonMinReviewCount: '100',
+});
+assert.strictEqual(amazonOptions.source, 'amazon', 'Collection source normalization should accept Amazon.');
+assert.strictEqual(amazonOptions.amazonMode, 'links', 'Amazon link/ASIN mode should be accepted.');
+assert.deepStrictEqual(
+  amazonOptions.amazonLinks.map((item) => item.url),
+  ['https://www.amazon.com/dp/B08N5WRWNW', 'https://www.amazon.com/dp/B0C123ABCD'],
+  'Amazon links and ASINs should normalize to canonical Amazon product URLs.',
+);
+assert.strictEqual(amazonOptions.amazonMaxPriceUsd, 35.5, 'Amazon max price should parse as USD.');
+assert.strictEqual(amazonOptions.amazonMinRating, 4.2, 'Amazon minimum rating should parse.');
+assert.strictEqual(amazonOptions.amazonMinReviewCount, 100, 'Amazon minimum review count should parse.');
+
+const amazonArgs = parseArgs([
+  '--source', 'amazon',
+  '--amazon-mode', 'keyword',
+  '--keywords', 'wireless charger',
+  '--count', '3',
+  '--amazon-max-price-usd', '29.99',
+  '--amazon-min-rating', '4',
+  '--amazon-min-review-count', '50',
+]);
+assert.strictEqual(amazonArgs.source, 'amazon', 'CLI should accept --source amazon.');
+assert.strictEqual(amazonArgs.amazonMode, 'keyword', 'CLI should accept --amazon-mode keyword.');
+assert.deepStrictEqual(amazonArgs.keywords, ['wireless charger'], 'Amazon keyword CLI input should parse through shared keywords.');
+assert.strictEqual(amazonArgs.amazonMaxPriceUsd, 29.99, 'CLI should pass Amazon max price.');
+assert.strictEqual(amazonArgs.amazonMinRating, 4, 'CLI should pass Amazon minimum rating.');
+assert.strictEqual(amazonArgs.amazonMinReviewCount, 50, 'CLI should pass Amazon minimum review count.');
+
+assert.ok(
+  collectScriptSource.includes("const COLLECT_SOURCE_AMAZON = 'amazon'")
+    && collectScriptSource.includes('normalizeAmazonProductInputs')
+    && collectScriptSource.includes('collectAmazonCandidatesFromKeywords')
+    && collectScriptSource.includes('async function runAmazonCollection'),
+  'Collection script should define and route Amazon browser collection.',
+);
+assert.ok(
+  collectScriptSource.includes('AMAZON_CLAIM_INITIAL_DELAY_MS')
+    && collectScriptSource.includes('buildCollectLinkRetryOptions(COLLECT_SOURCE_AMAZON)')
+    && collectScriptSource.includes('candidateUrls')
+    && collectScriptSource.includes('Amazon 搜索页已读取'),
+  'Amazon collection should batch submit candidates and use a longer Miaoshou claim wait instead of failing quickly per item.',
+);
+assert.ok(
+  collectScriptSource.includes("require('./lib/collection_dedupe_store')")
+    && collectScriptSource.includes('filterRecentCollectionDuplicates')
+    && collectScriptSource.includes('markCollectedItems')
+    && collectScriptSource.includes('跳过最近 7 天已采集商品'),
+  'Collection script should skip source products collected during the last 7 days and record successful collection results.',
+);
+assert.ok(
+  collectScriptSource.includes('extractAmazonProductDetail')
+    && collectScriptSource.includes('async function enrichAmazonCandidatesWithDetails')
+    && collectScriptSource.includes('Amazon 详情已补全')
+    && collectScriptSource.includes('weightText: candidate.weightText')
+    && collectScriptSource.includes('weightGrams: candidate.weightGrams'),
+  'Amazon collection should enrich search candidates from product detail pages before recording titles and weights.',
+);
+assert.ok(
+  collectScriptSource.includes('filterAmazonCandidatesWithDetailPrices')
+    && collectScriptSource.includes('missing_amazon_detail_price')
+    && collectScriptSource.includes('避免妙手来源价格为空'),
+  'Amazon collection should skip candidates whose detail page has no standard price before submitting to Miaoshou.',
+);
+
+const amazonRetryOptions = buildCollectLinkRetryOptions('amazon');
+assert.strictEqual(amazonRetryOptions.source, 'amazon', 'Amazon collect-link retry options should preserve source.');
+assert.ok(
+  amazonRetryOptions.claimInitialDelayMs > 30000
+    && amazonRetryOptions.claimRetryCount > 6
+    && amazonRetryOptions.claimRetryDelayMs >= 10000,
+  'Amazon collect-link retry options should wait longer than the 1688 default because Miaoshou processes Amazon links more slowly.',
+);
 
 assert.deepStrictEqual(
   splitTerms('防晒帽, 防晒冰袖，遮阳伞\n防晒面罩'),
@@ -464,6 +546,52 @@ assert.ok(
   );
   assert.strictEqual(apiResult.commonCollectBoxDetailIds[0], 666001);
   assert.deepStrictEqual(apiResult.platformCollectBoxDetailIdMap.tiktok, { 666001: 888001 });
+
+  const amazonCalls = [];
+  const amazonApiResult = await collectSourceLinksWithMiaoshouApi([
+    'https://www.amazon.com/dp/B00F97FHAW?tag=abc',
+  ], {
+    source: 'amazon',
+    request: async (apiPath, requestOptions) => {
+      amazonCalls.push({ path: apiPath, body: requestOptions.body });
+      if (apiPath === COMMON_COLLECT_FETCH_ITEM_PATH) {
+        return {
+          result: 'success',
+          code: 'success',
+          data: {
+            sourceItemIdAndDetailIdMap: {
+              B00F97FHAW: 669001,
+            },
+          },
+        };
+      }
+      if (apiPath === COMMON_COLLECT_CLAIMED_PATH) {
+        return {
+          result: 'success',
+          code: 'success',
+          data: {
+            platformCollectBoxDetailIdMap: {
+              tiktok: {
+                669001: 889001,
+              },
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected path: ${apiPath}`);
+    },
+  });
+  assert.deepStrictEqual(
+    amazonCalls[0],
+    {
+      path: COMMON_COLLECT_FETCH_ITEM_PATH,
+      body: {
+        collectLinks: ['https://www.amazon.com/dp/B00F97FHAW'],
+      },
+    },
+    'Amazon collection should submit normalized amazon.com product links instead of filtering them out as non-1688 links.',
+  );
+  assert.strictEqual(amazonApiResult.commonCollectBoxDetailIds[0], 669001);
 
   const retryCalls = [];
   const retryResult = await collectSourceLinksWithMiaoshouApi([

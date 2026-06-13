@@ -33,6 +33,10 @@ assert.ok(
   'Automatic collection source should default to 1688.',
 );
 assert.ok(
+  appSource.includes('<a-radio-button value="amazon" :disabled="!supportsAmazonCollection">Amazon.com</a-radio-button>'),
+  'Collection page should expose Amazon.com as a collection source.',
+);
+assert.ok(
   !appSource.includes('<a-radio-button value="shopee">')
     && !appSource.includes('label="Shopee 站点"')
     && !appSource.includes("collectForm.mode === 'auto' && collectForm.source === 'shopee'"),
@@ -59,8 +63,21 @@ assert.ok(
   'Collection safe mode should default to disabled.',
 );
 assert.ok(
+  appSource.includes('amazonMaxPriceUsd: 10000')
+    && appSource.includes('amazonMinRating: 0')
+    && appSource.includes('amazonMinReviewCount: 0'),
+  'Collection form should define Amazon.com filter defaults.',
+);
+assert.ok(
+  appSource.includes('serverCapabilities')
+    && appSource.includes('supportsAmazonCollection')
+    && appSource.includes('payload.capabilities')
+    && appSource.includes("当前后台服务还没有加载 Amazon 采集能力"),
+  'Collection UI should block Amazon runs when a stale server process does not advertise Amazon support.',
+);
+assert.ok(
   appSource.includes('links:') && appSource.includes('collectLinks'),
-  'Collection form should support optional direct 1688 detail links.',
+  'Collection form should support optional direct source links.',
 );
 assert.ok(
   appSource.includes('自动采集')
@@ -72,16 +89,28 @@ assert.ok(
 assert.ok(
   appSource.includes('const collectLinkList = computed')
     && appSource.includes("collectForm.mode === 'links' ? Math.max(1, collectLinkList.value.length)")
-    && appSource.includes("collectSource: '1688'")
+    && appSource.includes('collectSource: collectForm.source')
     && appSource.includes("collectShopeeSite: 'my'")
+    && appSource.includes("collectAmazonMode: collectForm.source === 'amazon'")
+    && appSource.includes('collectAmazonMarketplace: \'us\'')
+    && appSource.includes('collectAmazonMaxPriceUsd: Number(collectForm.amazonMaxPriceUsd || 0)')
+    && appSource.includes('collectAmazonMinRating: Math.max(0, Number(collectForm.amazonMinRating || 0))')
+    && appSource.includes('collectAmazonMinReviewCount: Math.max(0, Number(collectForm.amazonMinReviewCount || 0))')
     && appSource.includes("collectKeywords: collectForm.mode === 'auto' ? collectForm.keywords : ''")
     && appSource.includes("collectLinks: collectForm.mode === 'links' ? collectForm.links : ''")
     && appSource.includes("collectSkipFilters: collectForm.mode === 'links'"),
-  'Collection payload should submit active mode inputs, force 1688 as the visible source, and derive link-mode target count from pasted links.',
+  'Collection payload should submit active mode inputs, source-specific Amazon settings, and derive link-mode target count from pasted links.',
 );
 assert.ok(
   appSource.includes('<div v-if="collectForm.mode === \'auto\'" class="collect-auto-filter-panel"'),
   'Automatic selection filters should render only in automatic collection mode.',
+);
+assert.ok(
+  appSource.includes('Amazon 链接或 ASIN')
+    && appSource.includes('Amazon.com 关键词采集')
+    && appSource.includes('最高展示价')
+    && appSource.includes('最低评论数'),
+  'Collection page should present Amazon.com keyword and link/ASIN fields.',
 );
 assert.ok(
   appSource.includes('妙手开放 API') && !appSource.includes('用妙手插件采集到采集箱'),

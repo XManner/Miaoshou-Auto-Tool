@@ -56,6 +56,7 @@ const COLLECT_TASK_DEFAULT_PREFERRED_TERMS = '';
 const COLLECT_TASK_DEFAULT_EXCLUDED_TERMS = '';
 const COLLECT_SOURCE_1688 = '1688';
 const COLLECT_SOURCE_SHOPEE = 'shopee';
+const COLLECT_SOURCE_AMAZON = 'amazon';
 const SHOPEE_SITE_CODES = new Set(['my', 'ph', 'th']);
 const MAX_EDIT_ITEM_INDEX = 500;
 const MAX_SOURCE_PRICE_EXTRA_CNY = 1000;
@@ -127,6 +128,13 @@ function sendJson(response, statusCode, payload) {
     'cache-control': 'no-store',
   });
   response.end(JSON.stringify(payload));
+}
+
+function buildServerCapabilities() {
+  return {
+    collectSources: [COLLECT_SOURCE_1688, COLLECT_SOURCE_AMAZON],
+    amazonCollection: true,
+  };
 }
 
 function sendHtml(response, html) {
@@ -344,7 +352,24 @@ function normalizeCollectBoolean(value, fallback = true) {
 
 function normalizeCollectSource(value = COLLECT_SOURCE_1688) {
   const normalized = String(value || COLLECT_SOURCE_1688).trim().toLowerCase();
-  return normalized === COLLECT_SOURCE_SHOPEE ? COLLECT_SOURCE_SHOPEE : COLLECT_SOURCE_1688;
+  if (normalized === COLLECT_SOURCE_SHOPEE) {
+    return COLLECT_SOURCE_SHOPEE;
+  }
+  if (normalized === COLLECT_SOURCE_AMAZON) {
+    return COLLECT_SOURCE_AMAZON;
+  }
+  return COLLECT_SOURCE_1688;
+}
+
+function normalizeAmazonMode(value = '', hasLinks = false) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'links' || normalized === 'link' || normalized === 'asin') {
+    return 'links';
+  }
+  if (normalized === 'keyword' || normalized === 'keywords' || normalized === 'search') {
+    return 'keyword';
+  }
+  return hasLinks ? 'links' : 'keyword';
 }
 
 function normalizeShopeeSite(value = 'my') {
@@ -354,10 +379,17 @@ function normalizeShopeeSite(value = 'my') {
 
 function normalizeCollectOptions(input = {}) {
   const collectCount = normalizeCollectInteger(input.collectCount || input.count, 10, 1, MAX_COLLECT_COUNT, '采集数量');
+  const collectSource = normalizeCollectSource(input.collectSource || input.source);
+  const collectLinks = normalizeOptionalCollectText(input.collectLinks || input.links, collectSource === COLLECT_SOURCE_AMAZON ? 'Amazon 链接或 ASIN' : '1688 详情链接');
   return {
     count: collectCount,
     collectCount,
-    collectSource: normalizeCollectSource(input.collectSource || input.source),
+    collectSource,
+    collectAmazonMode: normalizeAmazonMode(input.collectAmazonMode || input.amazonMode, Boolean(collectLinks)),
+    collectAmazonMarketplace: 'us',
+    collectAmazonMaxPriceUsd: normalizeCollectNumber(input.collectAmazonMaxPriceUsd || input.amazonMaxPriceUsd, 10000, 0, 100000, 'Amazon 最高展示价'),
+    collectAmazonMinRating: normalizeCollectNumber(input.collectAmazonMinRating || input.amazonMinRating, 0, 0, 5, 'Amazon 最低评分'),
+    collectAmazonMinReviewCount: normalizeCollectInteger(input.collectAmazonMinReviewCount || input.amazonMinReviewCount, 0, 0, 10000000, 'Amazon 最低评论数'),
     collectShopeeSite: normalizeShopeeSite(input.collectShopeeSite || input.shopeeSite),
     collectShopeeMaxPrice: normalizeCollectNumber(input.collectShopeeMaxPrice || input.shopeeMaxPrice, 10000, 0.01, 100000, 'Shopee 最高展示价'),
     collectShopeeMaxMoq: normalizeCollectInteger(input.collectShopeeMaxMoq || input.shopeeMaxMoq, 3, 1, 1000, '1688 最大起批量'),
@@ -368,7 +400,7 @@ function normalizeCollectOptions(input = {}) {
     collectMinScore: normalizeCollectInteger(input.collectMinScore || input.minScore, 50, 0, 100, '最低评分'),
     collectSafeMode: normalizeCollectBoolean(input.collectSafeMode ?? input.safeMode, false),
     collectSkipFilters: normalizeCollectBoolean(input.collectSkipFilters ?? input.skipFilters, false),
-    collectLinks: normalizeOptionalCollectText(input.collectLinks || input.links, '1688 详情链接'),
+    collectLinks,
   };
 }
 
@@ -882,6 +914,11 @@ function serializeRun(run) {
     flashSelectionMode: run.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
     collectCount: run.collectCount,
     collectSource: run.collectSource,
+    collectAmazonMode: run.collectAmazonMode,
+    collectAmazonMarketplace: run.collectAmazonMarketplace,
+    collectAmazonMaxPriceUsd: run.collectAmazonMaxPriceUsd,
+    collectAmazonMinRating: run.collectAmazonMinRating,
+    collectAmazonMinReviewCount: run.collectAmazonMinReviewCount,
     collectShopeeSite: run.collectShopeeSite,
     collectShopeeMaxPrice: run.collectShopeeMaxPrice,
     collectShopeeMaxMoq: run.collectShopeeMaxMoq,
@@ -952,6 +989,11 @@ function rememberRun(run) {
     flashSelectionMode: run.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
     collectCount: run.collectCount,
     collectSource: run.collectSource,
+    collectAmazonMode: run.collectAmazonMode,
+    collectAmazonMarketplace: run.collectAmazonMarketplace,
+    collectAmazonMaxPriceUsd: run.collectAmazonMaxPriceUsd,
+    collectAmazonMinRating: run.collectAmazonMinRating,
+    collectAmazonMinReviewCount: run.collectAmazonMinReviewCount,
     collectShopeeSite: run.collectShopeeSite,
     collectShopeeMaxPrice: run.collectShopeeMaxPrice,
     collectShopeeMaxMoq: run.collectShopeeMaxMoq,
@@ -1127,6 +1169,16 @@ function startCollectRun(options) {
     COLLECT_SCRIPT_PATH,
     '--source',
     options.collectSource,
+    '--amazon-mode',
+    options.collectAmazonMode,
+    '--amazon-marketplace',
+    options.collectAmazonMarketplace,
+    '--amazon-max-price-usd',
+    String(options.collectAmazonMaxPriceUsd),
+    '--amazon-min-rating',
+    String(options.collectAmazonMinRating),
+    '--amazon-min-review-count',
+    String(options.collectAmazonMinReviewCount),
     '--shopee-site',
     options.collectShopeeSite,
     '--shopee-max-price',
@@ -1152,13 +1204,18 @@ function startCollectRun(options) {
     '--links',
     options.collectLinks,
   ];
-  const command = `node miaoshou_1688_collect.js --source ${options.collectSource} --shopee-site ${options.collectShopeeSite} --shopee-max-price ${options.collectShopeeMaxPrice} --shopee-max-moq ${options.collectShopeeMaxMoq} --keywords ${JSON.stringify(options.collectKeywords)} --count ${options.collectCount} --max-price ${options.collectMaxPriceCny} --preferred-terms ${JSON.stringify(options.collectPreferredTerms)} --excluded-terms ${JSON.stringify(options.collectExcludedTerms)} --min-score ${options.collectMinScore} --safe-mode ${options.collectSafeMode} --skip-filters ${options.collectSkipFilters} --links ${JSON.stringify(options.collectLinks || '')}`;
+  const command = `node miaoshou_1688_collect.js --source ${options.collectSource} --amazon-mode ${options.collectAmazonMode} --amazon-marketplace ${options.collectAmazonMarketplace} --amazon-max-price-usd ${options.collectAmazonMaxPriceUsd} --amazon-min-rating ${options.collectAmazonMinRating} --amazon-min-review-count ${options.collectAmazonMinReviewCount} --shopee-site ${options.collectShopeeSite} --shopee-max-price ${options.collectShopeeMaxPrice} --shopee-max-moq ${options.collectShopeeMaxMoq} --keywords ${JSON.stringify(options.collectKeywords)} --count ${options.collectCount} --max-price ${options.collectMaxPriceCny} --preferred-terms ${JSON.stringify(options.collectPreferredTerms)} --excluded-terms ${JSON.stringify(options.collectExcludedTerms)} --min-score ${options.collectMinScore} --safe-mode ${options.collectSafeMode} --skip-filters ${options.collectSkipFilters} --links ${JSON.stringify(options.collectLinks || '')}`;
   const run = {
     id: randomUUID(),
     count: options.collectCount,
     collectCount: options.collectCount,
     collectKeywords: options.collectKeywords,
     collectSource: options.collectSource,
+    collectAmazonMode: options.collectAmazonMode,
+    collectAmazonMarketplace: options.collectAmazonMarketplace,
+    collectAmazonMaxPriceUsd: options.collectAmazonMaxPriceUsd,
+    collectAmazonMinRating: options.collectAmazonMinRating,
+    collectAmazonMinReviewCount: options.collectAmazonMinReviewCount,
     collectShopeeSite: options.collectShopeeSite,
     collectShopeeMaxPrice: options.collectShopeeMaxPrice,
     collectShopeeMaxMoq: options.collectShopeeMaxMoq,
@@ -1199,16 +1256,28 @@ function startCollectRun(options) {
   };
 
   appendLog(run, 'system', `开始执行：${command}`);
-  appendLog(run, 'system', `采集来源：${options.collectSource === COLLECT_SOURCE_SHOPEE ? `Shopee ${options.collectShopeeSite}` : '1688'}。`);
+  appendLog(run, 'system', `采集来源：${
+    options.collectSource === COLLECT_SOURCE_AMAZON
+      ? 'Amazon.com'
+      : (options.collectSource === COLLECT_SOURCE_SHOPEE ? `Shopee ${options.collectShopeeSite}` : '1688')
+  }。`);
   appendLog(run, 'system', `采集关键词：${options.collectKeywords}`);
   if (options.collectLinks) {
-    appendLog(run, 'system', '已提供 1688 详情链接，将优先按链接采集。');
+    appendLog(run, 'system', options.collectSource === COLLECT_SOURCE_AMAZON
+      ? '已提供 Amazon 链接或 ASIN，将优先按链接/ASIN 采集。'
+      : '已提供 1688 详情链接，将优先按链接采集。');
   }
-  appendLog(run, 'system', `计划采集 ${options.collectCount} 个，最高采购价 ${options.collectMaxPriceCny} 元，最低评分 ${options.collectMinScore}。`);
+  if (options.collectSource === COLLECT_SOURCE_AMAZON) {
+    appendLog(run, 'system', `计划采集 ${options.collectCount} 个，Amazon 模式：${options.collectAmazonMode === 'links' ? '链接/ASIN' : '关键词'}；最高展示价 ${options.collectAmazonMaxPriceUsd} USD，Amazon 最低评分 ${options.collectAmazonMinRating}，最低评论数 ${options.collectAmazonMinReviewCount}。`);
+  } else {
+    appendLog(run, 'system', `计划采集 ${options.collectCount} 个，最高采购价 ${options.collectMaxPriceCny} 元，最低评分 ${options.collectMinScore}。`);
+  }
   if (options.collectSource === COLLECT_SOURCE_SHOPEE) {
     appendLog(run, 'system', `Shopee 最高展示价 ${options.collectShopeeMaxPrice}，1688 最大起批量 ${options.collectShopeeMaxMoq}。`);
   }
-  appendLog(run, 'system', `安全模式：${options.collectSafeMode ? '开启' : '关闭'}。`);
+  if (options.collectSource !== COLLECT_SOURCE_AMAZON) {
+    appendLog(run, 'system', `安全模式：${options.collectSafeMode ? '开启' : '关闭'}。`);
+  }
   if (accountSummary) {
     appendLog(run, 'system', `使用账号：${accountSummary.label}`);
   }
@@ -1812,6 +1881,7 @@ async function handleRequest(request, response) {
 
   if (request.method === 'GET' && url.pathname === '/api/status') {
     sendJson(response, 200, {
+      capabilities: buildServerCapabilities(),
       currentRun: serializeRun(currentRun),
       history,
     });
@@ -1935,6 +2005,7 @@ async function handleRequest(request, response) {
 
   if (request.method === 'POST' && url.pathname === '/api/logs/clear') {
     sendJson(response, 200, {
+      capabilities: buildServerCapabilities(),
       cleared: clearCurrentRunLogs(),
       currentRun: serializeRun(currentRun),
     });
