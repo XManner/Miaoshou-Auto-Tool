@@ -84,4 +84,16 @@ for (const [label, moduleSource] of [
   );
 }
 
+const flashEnsureBody = extractFunctionBody(source, 'ensureLargeBrowserViewport');
+assert.ok(
+  source.includes('function resolveBrowserViewportDimension'),
+  'Flash-sale browser sizing should use a helper that can follow smaller real window bounds.',
+);
+assert.ok(
+  flashEnsureBody.includes('resolveBrowserViewportDimension')
+    && !/Math\.max\(\s*DEFAULT_BROWSER_WINDOW_WIDTH/.test(flashEnsureBody)
+    && !/Math\.max\(\s*DEFAULT_BROWSER_WINDOW_HEIGHT/.test(flashEnsureBody),
+  'Flash-sale browser sizing should not force a 1600x1100 page viewport on lower-resolution screens.',
+);
+
 console.log('flash-sale browser window checks passed');

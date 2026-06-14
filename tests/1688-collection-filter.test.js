@@ -73,8 +73,10 @@ assert.ok(
   'Collection runs should not mark success by clicking a browser plugin button.',
 );
 assert.ok(
-  collectScriptSource.includes('if (options.links.length === 0)'),
-  'Direct detail-link collection should open the detail page before applying price/title filters.',
+  collectScriptSource.includes('async function runLinkCollection(options)')
+    && collectScriptSource.includes('if (options.links.length > 0) {')
+    && collectScriptSource.includes('return runLinkCollection(options);'),
+  'Direct product-link collection should go straight through the Miaoshou API instead of opening 1688 detail pages.',
 );
 assert.ok(
   collectScriptSource.includes('skipFilters: toBoolean(input.skipFilters || input.collectSkipFilters, DEFAULT_COLLECT_OPTIONS.skipFilters)')
@@ -98,7 +100,7 @@ const amazonOptions = normalizeOptions({
   amazonMinRating: '4.2',
   amazonMinReviewCount: '100',
 });
-assert.strictEqual(amazonOptions.source, 'amazon', 'Collection source normalization should accept Amazon.');
+assert.strictEqual(amazonOptions.source, 'links', 'Pasted Amazon links should use generic product-link collection mode.');
 assert.strictEqual(amazonOptions.amazonMode, 'links', 'Amazon link/ASIN mode should be accepted.');
 assert.deepStrictEqual(
   amazonOptions.amazonLinks.map((item) => item.url),
@@ -108,6 +110,25 @@ assert.deepStrictEqual(
 assert.strictEqual(amazonOptions.amazonMaxPriceUsd, 35.5, 'Amazon max price should parse as USD.');
 assert.strictEqual(amazonOptions.amazonMinRating, 4.2, 'Amazon minimum rating should parse.');
 assert.strictEqual(amazonOptions.amazonMinReviewCount, 100, 'Amazon minimum review count should parse.');
+
+const genericLinkOptions = normalizeOptions({
+  source: '1688',
+  links: [
+    'https://example.com/product/abc?sku=1#gallery',
+    'https://www.amazon.com/dp/B08N5WRWNW?tag=x',
+    'https://detail.1688.com/offer/923280275684.html?spm=a',
+  ].join('\n'),
+});
+assert.strictEqual(genericLinkOptions.source, 'links', 'Any pasted product link should switch collection to generic link mode.');
+assert.deepStrictEqual(
+  genericLinkOptions.links,
+  [
+    'https://example.com/product/abc?sku=1',
+    'https://www.amazon.com/dp/B08N5WRWNW',
+    'https://detail.1688.com/offer/923280275684.html?spm=a',
+  ],
+  'Generic link mode should keep non-1688 product URLs and canonicalize Amazon product links.',
+);
 
 const amazonArgs = parseArgs([
   '--source', 'amazon',
@@ -625,6 +646,52 @@ assert.ok(
     'Amazon collection should submit normalized amazon.com product links instead of filtering them out as non-1688 links.',
   );
   assert.strictEqual(amazonApiResult.commonCollectBoxDetailIds[0], 669001);
+
+  const genericCalls = [];
+  const genericApiResult = await collectSourceLinksWithMiaoshouApi([
+    'https://example.com/product/abc?sku=1#gallery',
+  ], {
+    source: 'links',
+    request: async (apiPath, requestOptions) => {
+      genericCalls.push({ path: apiPath, body: requestOptions.body });
+      if (apiPath === COMMON_COLLECT_FETCH_ITEM_PATH) {
+        return {
+          result: 'success',
+          code: 'success',
+          data: {
+            sourceItemIdAndDetailIdMap: {
+              example: 669501,
+            },
+          },
+        };
+      }
+      if (apiPath === COMMON_COLLECT_CLAIMED_PATH) {
+        return {
+          result: 'success',
+          code: 'success',
+          data: {
+            platformCollectBoxDetailIdMap: {
+              tiktok: {
+                669501: 889501,
+              },
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected path: ${apiPath}`);
+    },
+  });
+  assert.deepStrictEqual(
+    genericCalls[0],
+    {
+      path: COMMON_COLLECT_FETCH_ITEM_PATH,
+      body: {
+        collectLinks: ['https://example.com/product/abc?sku=1'],
+      },
+    },
+    'Generic link collection should submit non-1688 product links directly to Miaoshou.',
+  );
+  assert.strictEqual(genericApiResult.commonCollectBoxDetailIds[0], 669501);
 
   const retryCalls = [];
   const retryResult = await collectSourceLinksWithMiaoshouApi([

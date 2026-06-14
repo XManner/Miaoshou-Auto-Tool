@@ -26,6 +26,7 @@ const DEFAULT_1688_HOME_URL = 'https://www.1688.com';
 const COLLECT_SOURCE_1688 = '1688';
 const COLLECT_SOURCE_SHOPEE = 'shopee';
 const COLLECT_SOURCE_AMAZON = 'amazon';
+const COLLECT_SOURCE_LINKS = 'links';
 const SHOPEE_SITE_CONFIG = {
   my: { label: '马来西亚', origin: 'https://shopee.com.my' },
   ph: { label: '菲律宾', origin: 'https://shopee.ph' },
@@ -150,6 +151,9 @@ function normalizeNumber(value, fallback, { min = -Infinity, max = Infinity, lab
 
 function normalizeCollectSource(value = COLLECT_SOURCE_1688) {
   const normalized = String(value || COLLECT_SOURCE_1688).trim().toLowerCase();
+  if (normalized === COLLECT_SOURCE_LINKS || normalized === 'link') {
+    return COLLECT_SOURCE_LINKS;
+  }
   if (normalized === COLLECT_SOURCE_SHOPEE) {
     return COLLECT_SOURCE_SHOPEE;
   }
@@ -181,7 +185,6 @@ function normalizeShopeeSite(value = 'my') {
 }
 
 function normalizeOptions(input = {}) {
-  const source = normalizeCollectSource(input.source || input.collectSource);
   const keywords = splitTerms(input.keywords).length > 0
     ? splitTerms(input.keywords)
     : DEFAULT_KEYWORDS;
@@ -194,7 +197,13 @@ function normalizeOptions(input = {}) {
   const rawLinks = input.links || input.collectLinks;
   const amazonRawInputs = splitAmazonProductInputs(rawLinks);
   const amazonLinks = normalizeAmazonProductInputs(rawLinks);
-  const links = source === COLLECT_SOURCE_AMAZON
+  const genericLinks = normalizeGenericSourceLinks(rawLinks);
+  const source = genericLinks.length > 0
+    ? COLLECT_SOURCE_LINKS
+    : normalizeCollectSource(input.source || input.collectSource);
+  const links = source === COLLECT_SOURCE_LINKS
+    ? genericLinks
+    : source === COLLECT_SOURCE_AMAZON
     ? amazonLinks.map((item) => item.url)
     : normalizeSourceLinks(rawLinks);
 
@@ -719,6 +728,42 @@ function normalizeCollectableSourceUrl(rawUrl = '') {
   return normalizeShopeeProductUrl(rawUrl);
 }
 
+function normalizeGenericProductUrl(rawUrl = '') {
+  const normalizedAmazon = normalizeAmazonProductInputs([rawUrl])[0];
+  if (normalizedAmazon) {
+    return normalizedAmazon.url;
+  }
+
+  const trimmed = String(rawUrl || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (!/^https?:$/i.test(url.protocol)) {
+      return '';
+    }
+    url.hash = '';
+    return url.toString();
+  } catch (error) {
+    return '';
+  }
+}
+
+function normalizeGenericSourceLinks(value = []) {
+  const rawLinks = Array.isArray(value)
+    ? value.flatMap((item) => normalizeGenericSourceLinks(item))
+    : String(value || '')
+      .split(/[\s,，、]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  return unique(rawLinks
+    .map((item) => normalizeGenericProductUrl(item))
+    .filter(Boolean));
+}
+
 function normalizeSourceLinks(value = []) {
   const rawLinks = Array.isArray(value)
     ? value.flatMap((item) => normalizeSourceLinks(item))
@@ -1002,7 +1047,9 @@ async function collectSourceLinksWithMiaoshouApi(sourceLinks = [], {
   sleepFn = sleep,
 } = {}) {
   const collectSource = normalizeCollectSource(source);
-  const collectLinks = collectSource === COLLECT_SOURCE_AMAZON
+  const collectLinks = collectSource === COLLECT_SOURCE_LINKS
+    ? normalizeGenericSourceLinks(sourceLinks)
+    : collectSource === COLLECT_SOURCE_AMAZON
     ? normalizeAmazonProductInputs(sourceLinks).map((item) => item.url)
     : normalizeSourceLinks(sourceLinks);
   if (collectLinks.length === 0) {
@@ -2737,6 +2784,108 @@ async function enrichAmazonCandidatesWithDetails(candidates = [], options = {}) 
   }
 }
 
+async function runLinkCollection(options) {
+  log('采集方式：商品链接直接通过妙手开放 API 采集并认领到 TikTok 采集箱。');
+  const collected = [];
+  const failed = [];
+  const skipped = [];
+  const duplicates = [];
+  const candidates = options.links.map((url) => ({
+    source: COLLECT_SOURCE_LINKS,
+    title: url,
+    url,
+    keyword: '商品链接',
+    reason: '商品链接输入',
+  }));
+  const sourceDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_LINKS);
+  duplicates.push(...sourceDedupe.duplicates);
+  const candidatesToCollect = sourceDedupe.accepted.slice(0, options.count);
+
+  if (candidatesToCollect.length === 0) {
+    log('没有找到可采集的商品链接。');
+  } else {
+    log(`使用商品链接采集，链接数量：${candidatesToCollect.length}。`);
+    emitProgress({
+      phase: 'collect',
+      completed: 0,
+      total: options.count,
+      totalCount: options.count,
+      overallPercent: 0,
+      detailId: candidatesToCollect[0].url,
+    });
+
+    try {
+      const collectResult = await collectSourceLinksWithMiaoshouApi(
+        candidatesToCollect.map((candidate) => candidate.url),
+        buildCollectLinkRetryOptions(COLLECT_SOURCE_LINKS),
+      );
+      for (const [index, candidate] of candidatesToCollect.entries()) {
+        collected.push({
+          title: candidate.title,
+          url: candidate.url,
+          keyword: candidate.keyword,
+          reason: '商品链接已通过妙手接口采集。',
+          pluginMessage: collectResult.message,
+          apiMessage: collectResult.message,
+          commonCollectBoxDetailId: collectResult.commonCollectBoxDetailIds[index] || null,
+          platformCollectBoxDetailIdMap: collectResult.platformCollectBoxDetailIdMap,
+        });
+      }
+      rememberCollectedItems(collected, COLLECT_SOURCE_LINKS);
+      log(`商品链接批量采集成功：${collected.length}/${candidatesToCollect.length} 个商品已认领到 TikTok 采集箱。`);
+    } catch (error) {
+      if (isMiaoshouServiceUnavailableError(error)) {
+        log(`妙手服务异常，停止本次采集：${error.message || String(error)}`);
+        throw error;
+      }
+      for (const candidate of candidatesToCollect) {
+        failed.push({
+          title: candidate.title,
+          url: candidate.url,
+          keyword: candidate.keyword,
+          error: error.message || String(error),
+        });
+      }
+      log(`商品链接批量采集异常：${error.message || String(error)}`);
+    }
+  }
+
+  emitProgress({
+    phase: 'collect',
+    completed: collected.length,
+    total: options.count,
+    totalCount: options.count,
+    overallPercent: Math.round((collected.length / options.count) * 100),
+    detailId: collected[collected.length - 1]?.title || '',
+  });
+
+  const failedResults = failed.map((item) => ({
+    ...item,
+    error: item.error || '采集失败',
+    stage: 'collect',
+  }));
+
+  return {
+    mode: 'link-collection',
+    requestedCount: options.count,
+    totalCount: collected.length + duplicates.length + failed.length,
+    successCount: collected.length,
+    errorCount: failed.length,
+    skippedCount: skipped.length,
+    duplicateCount: duplicates.length,
+    params: {
+      source: options.source,
+      links: options.links,
+    },
+    results: [
+      ...collected.map(compactCollectionItem),
+      ...failedResults.map(compactCollectionItem),
+    ],
+    duplicates: duplicates.map(compactCollectionItem),
+    skipped,
+  };
+}
+
 async function runAmazonCollection(options) {
   log('采集方式：Amazon.com 浏览器自动化采集，合格商品通过妙手开放 API 采集并认领到 TikTok 采集箱。');
   const collected = [];
@@ -2874,11 +3023,15 @@ async function runAmazonCollection(options) {
 }
 
 async function runCollection(options) {
+  if (options.links.length > 0) {
+    return runLinkCollection(options);
+  }
+
   if (options.source === COLLECT_SOURCE_AMAZON) {
     return runAmazonCollection(options);
   }
 
-  if (options.source === COLLECT_SOURCE_SHOPEE && options.links.length === 0) {
+  if (options.source === COLLECT_SOURCE_SHOPEE) {
     return runShopeeCollection(options);
   }
 

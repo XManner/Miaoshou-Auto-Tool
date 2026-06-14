@@ -203,6 +203,25 @@ async function getBrowserWindowBounds(page) {
   }
 }
 
+function resolveBrowserViewportDimension({
+  windowSize,
+  currentSize,
+  defaultSize,
+  windowInset = 0,
+}) {
+  const resolvedWindowSize = Math.floor(Number(windowSize) || 0) - windowInset;
+  if (resolvedWindowSize > 0) {
+    return resolvedWindowSize;
+  }
+
+  const resolvedCurrentSize = Math.floor(Number(currentSize) || 0);
+  if (resolvedCurrentSize > 0) {
+    return resolvedCurrentSize;
+  }
+
+  return defaultSize;
+}
+
 async function ensureLargeBrowserViewport(page) {
   if (!page || page.isClosed()) {
     return;
@@ -216,16 +235,17 @@ async function ensureLargeBrowserViewport(page) {
     width: window.innerWidth || document.documentElement.clientWidth || 0,
     height: window.innerHeight || document.documentElement.clientHeight || 0,
   })).catch(() => null);
-  const viewportWidth = Math.max(
-    DEFAULT_BROWSER_WINDOW_WIDTH,
-    Math.floor(Number(windowBounds && windowBounds.width) || 0),
-    Math.floor(Number(currentViewport && currentViewport.width) || 0),
-  );
-  const viewportHeight = Math.max(
-    DEFAULT_BROWSER_WINDOW_HEIGHT,
-    Math.floor(Number(currentViewport && currentViewport.height) || 0),
-    Math.floor((Number(windowBounds && windowBounds.height) || 0) - 120),
-  );
+  const viewportWidth = resolveBrowserViewportDimension({
+    windowSize: windowBounds && windowBounds.width,
+    currentSize: currentViewport && currentViewport.width,
+    defaultSize: DEFAULT_BROWSER_WINDOW_WIDTH,
+  });
+  const viewportHeight = resolveBrowserViewportDimension({
+    windowSize: windowBounds && windowBounds.height,
+    currentSize: currentViewport && currentViewport.height,
+    defaultSize: DEFAULT_BROWSER_WINDOW_HEIGHT,
+    windowInset: 120,
+  });
 
   await page.setViewport({
     width: viewportWidth,
@@ -248,6 +268,21 @@ function normalizeText(value = '') {
 function parseFirstNumberBefore(text = '', suffix = '条') {
   const match = String(text || '').match(new RegExp(`(\\d+)\\s*${suffix}`));
   return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+function parseProductTotalCount(text = '') {
+  const counts = Array.from(String(text || '').matchAll(/(\d+)\s*条(?!\s*\/\s*页)/g))
+    .map((match) => Number.parseInt(match[1], 10))
+    .filter((count) => Number.isFinite(count) && count >= 0);
+  return counts.length > 0 ? counts[0] : 0;
+}
+
+function allFilteredProductsVisible(text = '', rows = []) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return false;
+  }
+  const productCount = parseProductTotalCount(text);
+  return productCount > 0 && rows.length >= productCount;
 }
 
 function parseSelectedCount(text = '') {
@@ -3550,6 +3585,8 @@ async function processActivity(browser, listPage, activity, runState) {
     let productRows = filteredProductState.rows;
     if (textAfterFilter.includes('暂无数据') || productRows.length === 0) {
       log('筛选后没有未设置秒杀价商品，跳过 1000 条/页切换。');
+    } else if (allFilteredProductsVisible(textAfterFilter, productRows)) {
+      log('筛选后的商品已全部可见，跳过 1000 条/页切换。');
     } else {
       await selectPageSize1000(detailPage);
       filteredProductState = await waitForProductRowsOrEmpty(detailPage, 60000);

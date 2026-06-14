@@ -10,8 +10,7 @@ assert.ok(
   'Page titles should include 商品采集.',
 );
 assert.ok(
-  /label="采集来源"[\s\S]*<a-radio-group v-model:value="collectForm\.source" button-style="solid" class="medium-radio-group equal-radio-group"/.test(appSource)
-    && /label="采集模式"[\s\S]*<a-radio-group v-model:value="collectForm\.mode" button-style="solid" class="medium-radio-group equal-radio-group"/.test(appSource),
+  /label="采集模式"[\s\S]*<a-radio-group v-model:value="collectForm\.mode" button-style="solid" class="medium-radio-group equal-radio-group"[\s\S]*label="采集来源"[\s\S]*<a-radio-group v-model:value="collectForm\.source" button-style="solid" class="medium-radio-group equal-radio-group"/.test(appSource),
   'Collection source and mode should use the same fixed-width button group as product edit controls.',
 );
 assert.ok(
@@ -104,9 +103,9 @@ assert.ok(
 assert.ok(
   appSource.includes('const collectLinkList = computed')
     && appSource.includes("collectForm.mode === 'links' ? Math.max(1, collectLinkList.value.length)")
-    && appSource.includes('collectSource: collectForm.source')
+    && appSource.includes("collectSource: collectForm.mode === 'links' ? 'links' : collectForm.source")
     && appSource.includes("collectShopeeSite: 'my'")
-    && appSource.includes("collectAmazonMode: collectForm.source === 'amazon'")
+    && appSource.includes("collectAmazonMode: collectForm.mode === 'links' ? 'links' : (collectForm.source === 'amazon'")
     && appSource.includes('collectAmazonMarketplace: \'us\'')
     && appSource.includes('collectAmazonMaxPriceUsd: Number(collectForm.amazonMaxPriceUsd || 0)')
     && appSource.includes('collectAmazonMinRating: Math.max(0, Number(collectForm.amazonMinRating || 0))')
@@ -117,15 +116,37 @@ assert.ok(
   'Collection payload should submit active mode inputs, source-specific Amazon settings, and derive link-mode target count from pasted links.',
 );
 assert.ok(
+  /label="采集来源" class="form-section form-section-choice" v-if="collectForm\.mode === 'auto'"/.test(appSource),
+  'Collection source selector should only be shown for automatic collection.',
+);
+assert.ok(
+  appSource.includes('label="商品链接"')
+    && appSource.includes('每行一个商品链接；当前识别到')
+    && !appSource.includes('Amazon 链接或 ASIN')
+    && !appSource.includes('1688 详情链接'),
+  'Direct-link collection should use generic product-link wording instead of platform-specific labels.',
+);
+assert.ok(
   appSource.includes('<div v-if="collectForm.mode === \'auto\'" class="collect-auto-filter-panel"'),
   'Automatic selection filters should render only in automatic collection mode.',
 );
+const autoFilterPanelSource = appSource.slice(
+  appSource.indexOf('<div v-if="collectForm.mode === \'auto\'" class="collect-auto-filter-panel"'),
+  appSource.indexOf('<div class="summary-box form-section form-section-summary">'),
+);
 assert.ok(
-  appSource.includes('Amazon 链接或 ASIN')
-    && appSource.includes('Amazon.com 关键词采集')
+  autoFilterPanelSource.includes('v-model:value="collectForm.count"')
+    && autoFilterPanelSource.includes('v-model:value="collectForm.maxPriceCny"')
+    && autoFilterPanelSource.includes('v-model:value="collectForm.minScore"')
+    && !autoFilterPanelSource.includes('size="large"')
+    && (autoFilterPanelSource.match(/size="middle"/g) || []).length >= 6,
+  'Collection automatic filter numeric inputs should use middle size instead of large size.',
+);
+assert.ok(
+  appSource.includes('Amazon.com 关键词采集')
     && appSource.includes('最高展示价')
     && appSource.includes('最低评论数'),
-  'Collection page should present Amazon.com keyword and link/ASIN fields.',
+  'Collection page should present Amazon.com keyword fields.',
 );
 assert.ok(
   appSource.includes('妙手开放 API') && !appSource.includes('用妙手插件采集到采集箱'),

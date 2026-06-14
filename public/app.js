@@ -580,35 +580,29 @@
         const targetCount = collectForm.mode === 'links'
           ? collectLinkList.value.length
           : Math.max(1, Number(collectForm.count || 1));
-        if (collectForm.source === 'amazon') {
-          if (collectForm.mode === 'links') {
-            return `使用 ${account}，Amazon.com 链接/ASIN 采集 ${targetCount} 个商品。`;
-          }
-          return `使用 ${account}，Amazon.com 关键词采集 ${targetCount} 个商品，最高展示价 ${collectForm.amazonMaxPriceUsd} USD，最低评分 ${collectForm.amazonMinRating}。`;
-        }
         if (collectForm.mode === 'links') {
-          return `使用 ${account}，链接采集 ${targetCount} 个详情链接。`;
+          return `使用 ${account}，链接采集 ${targetCount} 个商品链接。`;
+        }
+        if (collectForm.source === 'amazon') {
+          return `使用 ${account}，Amazon.com 关键词采集 ${targetCount} 个商品，最高展示价 ${collectForm.amazonMaxPriceUsd} USD，最低评分 ${collectForm.amazonMinRating}。`;
         }
         return `使用 ${account}，自动采集 ${targetCount} 个 1688 商品，最高采购价 ${collectForm.maxPriceCny} 元，最低评分 ${collectForm.minScore}。`;
       });
       const collectAlertMessage = computed(() => {
-        if (collectForm.source === 'amazon') {
-          return collectForm.mode === 'links' ? 'Amazon 链接/ASIN 采集' : 'Amazon.com 关键词采集';
-        }
         if (collectForm.mode === 'links') {
-          return '1688 链接采集';
+          return '商品链接采集';
+        }
+        if (collectForm.source === 'amazon') {
+          return 'Amazon.com 关键词采集';
         }
         return '1688 自动采集';
       });
       const collectAlertDescription = computed(() => {
-        if (collectForm.source === 'amazon') {
-          if (collectForm.mode === 'links') {
-            return '粘贴 Amazon.com 商品链接或 ASIN，系统会整理为美国站商品链接，并通过妙手开放 API 采集到 TikTok 采集箱。';
-          }
-          return '按关键词打开 Amazon.com 搜索页，按展示价、评分、评论数和排除词做轻量筛选，再通过妙手开放 API 采集到 TikTok 采集箱。';
-        }
         if (collectForm.mode === 'links') {
-          return '粘贴 1688 商品详情链接，系统会逐个打开详情页校验价格和风险词，合格后通过妙手开放 API 采集并认领到 TikTok 采集箱。';
+          return '粘贴商品链接，系统会直接通过妙手开放 API 采集到 TikTok 采集箱；如果妙手不支持某个平台或商品，页面会显示妙手返回的错误。';
+        }
+        if (collectForm.source === 'amazon') {
+          return '按关键词打开 Amazon.com 搜索页，按展示价、评分、评论数和排除词做轻量筛选，再通过妙手开放 API 采集到 TikTok 采集箱。';
         }
         return '按关键词在 1688 搜索选品，按价格、评分、优先词、排除词和安全模式过滤，合格后通过妙手开放 API 采集并认领到 TikTok 采集箱。';
       });
@@ -823,11 +817,11 @@
             edit: false,
             flash: false,
           },
-          collectSource: collectForm.source,
+          collectSource: collectForm.mode === 'links' ? 'links' : collectForm.source,
           collectShopeeSite: 'my',
           collectShopeeMaxPrice: 10000,
           collectShopeeMaxMoq: 3,
-          collectAmazonMode: collectForm.source === 'amazon' ? (collectForm.mode === 'links' ? 'links' : 'keyword') : '',
+          collectAmazonMode: collectForm.mode === 'links' ? 'links' : (collectForm.source === 'amazon' ? 'keyword' : ''),
           collectAmazonMarketplace: 'us',
           collectAmazonMaxPriceUsd: Number(collectForm.amazonMaxPriceUsd || 0),
           collectAmazonMinRating: Math.max(0, Number(collectForm.amazonMinRating || 0)),
@@ -858,14 +852,14 @@
       async function startCollectRun() {
         loading.value = true;
         try {
-          if (collectForm.source === 'amazon' && !supportsAmazonCollection.value) {
+          if (collectForm.mode === 'auto' && collectForm.source === 'amazon' && !supportsAmazonCollection.value) {
             throw new Error('当前后台服务还没有加载 Amazon 采集能力，请先重启本地工作台后再开始采集。');
           }
           if (collectForm.mode === 'auto' && !String(collectForm.keywords || '').trim()) {
             throw new Error(collectForm.source === 'amazon' ? 'Amazon 关键词采集需要先填写关键词。' : '自动采集需要先填写关键词。');
           }
           if (collectForm.mode === 'links' && collectLinkList.value.length === 0) {
-            throw new Error(collectForm.source === 'amazon' ? '链接/ASIN 采集需要先粘贴 Amazon 商品链接或 ASIN。' : '链接采集需要先粘贴 1688 详情链接。');
+            throw new Error('链接采集需要先粘贴商品链接。');
           }
           await requestJson('/api/run', {
             method: 'POST',
@@ -1236,7 +1230,7 @@
                   <article class="feature-card">
                     <div class="feature-kicker">选品到采集箱</div>
                     <h3>采集 1688 / Amazon 商品</h3>
-                    <p>按关键词或链接搜索商品，1688 支持采购价和安全模式过滤，Amazon.com 支持美元价、评分、评论数和 ASIN 链接采集。</p>
+                    <p>按关键词或商品链接采集商品，自动采集支持 1688 和 Amazon.com 筛选，链接采集可直接提交多平台商品链接。</p>
                     <a-button type="primary" @click="navigateToPage('collect')">进入商品采集</a-button>
                   </article>
                   <article class="feature-card">
@@ -1263,16 +1257,16 @@
                     :description="collectAlertDescription"
                   />
                   <a-form layout="vertical" class="task-form">
-                    <a-form-item label="采集来源" class="form-section form-section-choice">
-                      <a-radio-group v-model:value="collectForm.source" button-style="solid" class="medium-radio-group equal-radio-group">
-                        <a-radio-button value="1688">1688</a-radio-button>
-                        <a-radio-button value="amazon" :disabled="!supportsAmazonCollection">Amazon.com</a-radio-button>
-                      </a-radio-group>
-                    </a-form-item>
                     <a-form-item label="采集模式" class="form-section form-section-choice">
                       <a-radio-group v-model:value="collectForm.mode" button-style="solid" class="medium-radio-group equal-radio-group">
                         <a-radio-button value="auto">自动采集</a-radio-button>
                         <a-radio-button value="links">链接采集</a-radio-button>
+                      </a-radio-group>
+                    </a-form-item>
+                    <a-form-item label="采集来源" class="form-section form-section-choice" v-if="collectForm.mode === 'auto'">
+                      <a-radio-group v-model:value="collectForm.source" button-style="solid" class="medium-radio-group equal-radio-group">
+                        <a-radio-button value="1688">1688</a-radio-button>
+                        <a-radio-button value="amazon" :disabled="!supportsAmazonCollection">Amazon.com</a-radio-button>
                       </a-radio-group>
                     </a-form-item>
                     <a-form-item v-if="collectForm.mode === 'auto'" label="关键词" class="form-section">
@@ -1284,48 +1278,48 @@
                     </a-form-item>
                     <a-form-item
                       v-if="collectForm.mode === 'links'"
-                      :label="collectForm.source === 'amazon' ? 'Amazon 链接或 ASIN' : '1688 详情链接'"
+                      label="商品链接"
                       class="form-section"
-                      :extra="collectForm.source === 'amazon' ? '每行一个 Amazon 商品链接或 ASIN；当前识别到 ' + collectLinkList.length + ' 个有效输入。' : '每行一个链接；当前识别到 ' + collectLinkList.length + ' 个有效链接。'"
+                      :extra="'每行一个商品链接；当前识别到 ' + collectLinkList.length + ' 个有效链接。'"
                     >
                       <a-textarea
                         v-model:value="collectForm.links"
                         :rows="3"
-                        :placeholder="collectForm.source === 'amazon' ? 'https://www.amazon.com/dp/B08N5WRWNW\\nB0C123ABCD' : 'https://detail.1688.com/offer/923280275684.html'"
+                        placeholder="https://detail.1688.com/offer/923280275684.html&#10;https://www.amazon.com/dp/B08N5WRWNW"
                       />
                     </a-form-item>
                     <div v-if="collectForm.mode === 'auto'" class="collect-auto-filter-panel">
                       <a-row :gutter="16" class="form-section form-section-pricing">
                         <a-col :xs="24" :sm="8">
                           <a-form-item label="采集数量">
-                            <a-input-number v-model:value="collectForm.count" :min="1" :max="100" size="large" class="full-width" />
+                            <a-input-number v-model:value="collectForm.count" :min="1" :max="100" size="middle" class="full-width" />
                           </a-form-item>
                         </a-col>
                         <a-col v-if="collectForm.source !== 'amazon'" :xs="24" :sm="8">
                           <a-form-item label="最高采购价">
-                            <a-input-number v-model:value="collectForm.maxPriceCny" :min="0.01" :max="10000" :precision="2" addon-after="元" size="large" class="full-width" />
+                            <a-input-number v-model:value="collectForm.maxPriceCny" :min="0.01" :max="10000" :precision="2" addon-after="元" size="middle" class="full-width" />
                           </a-form-item>
                         </a-col>
                         <a-col v-if="collectForm.source === 'amazon'" :xs="24" :sm="8">
                           <a-form-item label="最高展示价">
-                            <a-input-number v-model:value="collectForm.amazonMaxPriceUsd" :min="0.01" :max="10000" :precision="2" addon-after="USD" size="large" class="full-width" />
+                            <a-input-number v-model:value="collectForm.amazonMaxPriceUsd" :min="0.01" :max="10000" :precision="2" addon-after="USD" size="middle" class="full-width" />
                           </a-form-item>
                         </a-col>
                         <a-col v-if="collectForm.source !== 'amazon'" :xs="24" :sm="8">
                           <a-form-item label="最低评分">
-                            <a-input-number v-model:value="collectForm.minScore" :min="0" :max="100" size="large" class="full-width" />
+                            <a-input-number v-model:value="collectForm.minScore" :min="0" :max="100" size="middle" class="full-width" />
                           </a-form-item>
                         </a-col>
                         <a-col v-if="collectForm.source === 'amazon'" :xs="24" :sm="8">
                           <a-form-item label="最低评分">
-                            <a-input-number v-model:value="collectForm.amazonMinRating" :min="0" :max="5" :precision="1" size="large" class="full-width" />
+                            <a-input-number v-model:value="collectForm.amazonMinRating" :min="0" :max="5" :precision="1" size="middle" class="full-width" />
                           </a-form-item>
                         </a-col>
                       </a-row>
                       <a-row :gutter="16" class="form-section">
                         <a-col v-if="collectForm.source === 'amazon'" :xs="24" :md="12">
                           <a-form-item label="最低评论数">
-                            <a-input-number v-model:value="collectForm.amazonMinReviewCount" :min="0" :max="1000000" size="large" class="full-width" />
+                            <a-input-number v-model:value="collectForm.amazonMinReviewCount" :min="0" :max="1000000" size="middle" class="full-width" />
                           </a-form-item>
                         </a-col>
                         <a-col v-if="collectForm.source !== 'amazon'" :xs="24" :md="12">
@@ -1683,7 +1677,6 @@
                 <template #extra>
                   <a-space>
                     <a-button :disabled="!hasLogs" @click="clearLogs">清理日志</a-button>
-                    <a-button danger :disabled="!isPageRunning" @click="stopRun">停止</a-button>
                   </a-space>
                 </template>
 

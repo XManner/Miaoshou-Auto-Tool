@@ -4,6 +4,7 @@ const path = require('path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'web_server.js'), 'utf8');
+const runPanelSource = appSource.match(/<a-card v-if="currentPage !== 'home' && currentPage !== 'config'" title="运行状态"[\s\S]*?<a-card v-if="currentPage === 'collect'"/)?.[0] || '';
 
 assert.ok(
   serverSource.includes('/vendor/vue.global.prod.js'),
@@ -127,6 +128,11 @@ assert.ok(
 assert.ok(
   /tasks:\s*\{\s*edit:\s*false,\s*flash:\s*true/.test(appSource),
   'Starting a flash task should send a flash-only payload.',
+);
+assert.ok(
+  runPanelSource.includes('@click="clearLogs"')
+    && !runPanelSource.includes('@click="stopRun"'),
+  'The run status panel should keep log cleanup but not repeat the top stop button.',
 );
 
 console.log('Vue task management page checks passed');

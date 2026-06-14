@@ -57,6 +57,7 @@ const COLLECT_TASK_DEFAULT_EXCLUDED_TERMS = '';
 const COLLECT_SOURCE_1688 = '1688';
 const COLLECT_SOURCE_SHOPEE = 'shopee';
 const COLLECT_SOURCE_AMAZON = 'amazon';
+const COLLECT_SOURCE_LINKS = 'links';
 const SHOPEE_SITE_CODES = new Set(['my', 'ph', 'th']);
 const MAX_EDIT_ITEM_INDEX = 500;
 const MAX_SOURCE_PRICE_EXTRA_CNY = 1000;
@@ -354,6 +355,9 @@ function normalizeCollectBoolean(value, fallback = true) {
 
 function normalizeCollectSource(value = COLLECT_SOURCE_1688) {
   const normalized = String(value || COLLECT_SOURCE_1688).trim().toLowerCase();
+  if (normalized === COLLECT_SOURCE_LINKS || normalized === 'link') {
+    return COLLECT_SOURCE_LINKS;
+  }
   if (normalized === COLLECT_SOURCE_SHOPEE) {
     return COLLECT_SOURCE_SHOPEE;
   }
@@ -381,8 +385,9 @@ function normalizeShopeeSite(value = 'my') {
 
 function normalizeCollectOptions(input = {}) {
   const collectCount = normalizeCollectInteger(input.collectCount || input.count, 10, 1, MAX_COLLECT_COUNT, '采集数量');
-  const collectSource = normalizeCollectSource(input.collectSource || input.source);
-  const collectLinks = normalizeOptionalCollectText(input.collectLinks || input.links, collectSource === COLLECT_SOURCE_AMAZON ? 'Amazon 链接或 ASIN' : '1688 详情链接');
+  const normalizedCollectSource = normalizeCollectSource(input.collectSource || input.source);
+  const collectLinks = normalizeOptionalCollectText(input.collectLinks || input.links, '商品链接');
+  const collectSource = collectLinks ? COLLECT_SOURCE_LINKS : normalizedCollectSource;
   return {
     count: collectCount,
     collectCount,
@@ -829,7 +834,7 @@ function combineWorkflowSummary(editSummary, flashSummary) {
 }
 
 function isCollectionSummary(summary) {
-  return Boolean(summary && ['1688-collection', 'shopee-collection', 'amazon-collection'].includes(summary.mode));
+  return Boolean(summary && ['1688-collection', 'shopee-collection', 'amazon-collection', 'link-collection'].includes(summary.mode));
 }
 
 function collectionSummaryReachedTarget(summary) {
@@ -1310,25 +1315,27 @@ function startCollectRun(options) {
 
   appendLog(run, 'system', `开始执行：${command}`);
   appendLog(run, 'system', `采集来源：${
-    options.collectSource === COLLECT_SOURCE_AMAZON
+    options.collectSource === COLLECT_SOURCE_LINKS
+      ? '商品链接'
+      : options.collectSource === COLLECT_SOURCE_AMAZON
       ? 'Amazon.com'
       : (options.collectSource === COLLECT_SOURCE_SHOPEE ? `Shopee ${options.collectShopeeSite}` : '1688')
   }。`);
   appendLog(run, 'system', `采集关键词：${options.collectKeywords}`);
   if (options.collectLinks) {
-    appendLog(run, 'system', options.collectSource === COLLECT_SOURCE_AMAZON
-      ? '已提供 Amazon 链接或 ASIN，将优先按链接/ASIN 采集。'
-      : '已提供 1688 详情链接，将优先按链接采集。');
+    appendLog(run, 'system', '已提供商品链接，将直接通过妙手接口采集。');
   }
   if (options.collectSource === COLLECT_SOURCE_AMAZON) {
     appendLog(run, 'system', `计划采集 ${options.collectCount} 个，Amazon 模式：${options.collectAmazonMode === 'links' ? '链接/ASIN' : '关键词'}；最高展示价 ${options.collectAmazonMaxPriceUsd} USD，Amazon 最低评分 ${options.collectAmazonMinRating}，最低评论数 ${options.collectAmazonMinReviewCount}。`);
+  } else if (options.collectSource === COLLECT_SOURCE_LINKS) {
+    appendLog(run, 'system', `计划采集 ${options.collectCount} 个商品链接。`);
   } else {
     appendLog(run, 'system', `计划采集 ${options.collectCount} 个，最高采购价 ${options.collectMaxPriceCny} 元，最低评分 ${options.collectMinScore}。`);
   }
   if (options.collectSource === COLLECT_SOURCE_SHOPEE) {
     appendLog(run, 'system', `Shopee 最高展示价 ${options.collectShopeeMaxPrice}，1688 最大起批量 ${options.collectShopeeMaxMoq}。`);
   }
-  if (options.collectSource !== COLLECT_SOURCE_AMAZON) {
+  if (options.collectSource !== COLLECT_SOURCE_AMAZON && options.collectSource !== COLLECT_SOURCE_LINKS) {
     appendLog(run, 'system', `安全模式：${options.collectSafeMode ? '开启' : '关闭'}。`);
   }
   if (accountSummary) {

@@ -80,6 +80,11 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('function allFilteredProductsVisible'),
+  'Flash sale script should detect when the filtered product list is already fully visible.',
+);
+
+assert.ok(
   pageSizeSource.includes('await waitForPageSize1000Selected(page')
     && pageSizeSource.includes('await waitForFilteredProductListStable(page'),
   'Changing product page size to 1000/page should wait for both the selected page-size control and the refreshed list.',
@@ -121,6 +126,12 @@ assert.ok(
     && filteredRowsIndex > filterIndex
     && pageSizeIndex > filteredRowsIndex,
   'Flash sale processing should check whether the filtered list is empty before trying to switch it to 1000/page.',
+);
+
+assert.ok(
+  processActivitySource.includes('allFilteredProductsVisible(textAfterFilter, productRows)')
+    && processActivitySource.includes('筛选后的商品已全部可见，跳过 1000 条/页切换。'),
+  'Flash sale processing should skip the 1000/page switch when all filtered products are already visible.',
 );
 
 assert.ok(

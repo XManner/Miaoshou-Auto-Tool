@@ -41,7 +41,9 @@ assert.ok(
   'Server status should expose collection source capabilities so the UI can detect stale servers.',
 );
 assert.ok(
-  (serverSource.includes('collectSource: normalizeCollectSource') || serverSource.includes('const collectSource = normalizeCollectSource'))
+  (serverSource.includes('collectSource: normalizeCollectSource')
+    || serverSource.includes('const collectSource = normalizeCollectSource')
+    || serverSource.includes('const normalizedCollectSource = normalizeCollectSource'))
     && serverSource.includes('collectShopeeSite: normalizeShopeeSite')
     && serverSource.includes('collectShopeeMaxPrice: normalizeCollectNumber'),
   'Server should validate Shopee automatic collection options.',
@@ -76,7 +78,14 @@ assert.ok(
 );
 assert.ok(
   serverSource.includes('collectLinks') && serverSource.includes("'--links'"),
-  'Collection command should pass optional direct 1688 detail links to the script.',
+  'Collection command should pass optional direct product links to the script.',
+);
+assert.ok(
+  serverSource.includes("const COLLECT_SOURCE_LINKS = 'links'")
+    && /normalized === COLLECT_SOURCE_LINKS/.test(serverSource)
+    && serverSource.includes('const collectSource = collectLinks ? COLLECT_SOURCE_LINKS : normalizedCollectSource')
+    && serverSource.includes("collectSource === COLLECT_SOURCE_LINKS"),
+  'Server should support a generic product-link collection source independent of 1688 or Amazon.',
 );
 assert.ok(
   serverSource.includes("'--source'")
