@@ -4,6 +4,20 @@ const os = require('os');
 const path = require('path');
 const iconv = require('iconv-lite');
 const puppeteer = require('puppeteer-core');
+const {
+  normalizeAmazonProductInputs,
+  splitAmazonProductInputs,
+} = require('./lib/amazon_url');
+const {
+  collectAmazonCandidatesFromKeywords,
+  extractAmazonProductDetail,
+  filterAmazonCandidatesWithDetailPrices,
+} = require('./lib/amazon_browser_collect');
+const {
+  DEFAULT_DEDUPE_WINDOW_DAYS,
+  filterRecentCollectionDuplicates,
+  markCollectedItems,
+} = require('./lib/collection_dedupe_store');
 
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_BROWSER_WINDOW_WIDTH = 1600;
@@ -11,6 +25,7 @@ const DEFAULT_BROWSER_WINDOW_HEIGHT = 1100;
 const DEFAULT_1688_HOME_URL = 'https://www.1688.com';
 const COLLECT_SOURCE_1688 = '1688';
 const COLLECT_SOURCE_SHOPEE = 'shopee';
+const COLLECT_SOURCE_AMAZON = 'amazon';
 const SHOPEE_SITE_CONFIG = {
   my: { label: '马来西亚', origin: 'https://shopee.com.my' },
   ph: { label: '菲律宾', origin: 'https://shopee.ph' },
@@ -23,6 +38,9 @@ const DEFAULT_COLLECTION_PLATFORM = 'tiktok';
 const DEFAULT_CLAIM_RETRY_COUNT = 6;
 const DEFAULT_CLAIM_RETRY_DELAY_MS = 5000;
 const DEFAULT_CLAIM_INITIAL_DELAY_MS = 30000;
+const AMAZON_CLAIM_INITIAL_DELAY_MS = 120000;
+const AMAZON_CLAIM_RETRY_COUNT = 24;
+const AMAZON_CLAIM_RETRY_DELAY_MS = 15000;
 const DEFAULT_FETCH_SERVICE_RETRY_COUNT = 1;
 const DEFAULT_FETCH_SERVICE_RETRY_DELAY_MS = 60000;
 const DEFAULT_CLAIM_SERVICE_RETRY_COUNT = 1;
@@ -73,6 +91,13 @@ const SAFE_ACCESSORY_TERMS = [
 
 const DEFAULT_COLLECT_OPTIONS = {
   source: COLLECT_SOURCE_1688,
+  amazonMode: 'keyword',
+  amazonMarketplace: 'us',
+  amazonMaxPriceUsd: 10000,
+  amazonMinRating: 0,
+  amazonMinReviewCount: 0,
+  amazonLinks: [],
+  amazonRawInputs: [],
   shopeeSite: 'my',
   shopeeMaxPrice: 10000,
   shopeeMaxMoq: 3,
@@ -125,7 +150,29 @@ function normalizeNumber(value, fallback, { min = -Infinity, max = Infinity, lab
 
 function normalizeCollectSource(value = COLLECT_SOURCE_1688) {
   const normalized = String(value || COLLECT_SOURCE_1688).trim().toLowerCase();
-  return normalized === COLLECT_SOURCE_SHOPEE ? COLLECT_SOURCE_SHOPEE : COLLECT_SOURCE_1688;
+  if (normalized === COLLECT_SOURCE_SHOPEE) {
+    return COLLECT_SOURCE_SHOPEE;
+  }
+  if (normalized === COLLECT_SOURCE_AMAZON) {
+    return COLLECT_SOURCE_AMAZON;
+  }
+  return COLLECT_SOURCE_1688;
+}
+
+function normalizeAmazonMode(value = '', hasLinks = false) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'links' || normalized === 'link' || normalized === 'asin') {
+    return 'links';
+  }
+  if (normalized === 'keyword' || normalized === 'keywords' || normalized === 'search') {
+    return 'keyword';
+  }
+  return hasLinks ? 'links' : 'keyword';
+}
+
+function normalizeAmazonMarketplace(value = 'us') {
+  const normalized = String(value || 'us').trim().toLowerCase();
+  return normalized === 'us' ? 'us' : 'us';
 }
 
 function normalizeShopeeSite(value = 'my') {
@@ -134,6 +181,7 @@ function normalizeShopeeSite(value = 'my') {
 }
 
 function normalizeOptions(input = {}) {
+  const source = normalizeCollectSource(input.source || input.collectSource);
   const keywords = splitTerms(input.keywords).length > 0
     ? splitTerms(input.keywords)
     : DEFAULT_KEYWORDS;
@@ -143,10 +191,34 @@ function normalizeOptions(input = {}) {
   const excludedTerms = splitTerms(input.excludedTerms).length > 0
     ? splitTerms(input.excludedTerms)
     : DEFAULT_EXCLUDED_TERMS;
-  const links = normalizeSourceLinks(input.links);
+  const rawLinks = input.links || input.collectLinks;
+  const amazonRawInputs = splitAmazonProductInputs(rawLinks);
+  const amazonLinks = normalizeAmazonProductInputs(rawLinks);
+  const links = source === COLLECT_SOURCE_AMAZON
+    ? amazonLinks.map((item) => item.url)
+    : normalizeSourceLinks(rawLinks);
 
   return {
-    source: normalizeCollectSource(input.source || input.collectSource),
+    source,
+    amazonMode: normalizeAmazonMode(input.amazonMode || input.collectAmazonMode, amazonLinks.length > 0),
+    amazonMarketplace: normalizeAmazonMarketplace(input.amazonMarketplace || input.collectAmazonMarketplace),
+    amazonMaxPriceUsd: normalizeNumber(input.amazonMaxPriceUsd || input.collectAmazonMaxPriceUsd, DEFAULT_COLLECT_OPTIONS.amazonMaxPriceUsd, {
+      min: 0,
+      max: 100000,
+      label: 'Amazon 最高展示价',
+    }),
+    amazonMinRating: normalizeNumber(input.amazonMinRating || input.collectAmazonMinRating, DEFAULT_COLLECT_OPTIONS.amazonMinRating, {
+      min: 0,
+      max: 5,
+      label: 'Amazon 最低评分',
+    }),
+    amazonMinReviewCount: Math.round(normalizeNumber(input.amazonMinReviewCount || input.collectAmazonMinReviewCount, DEFAULT_COLLECT_OPTIONS.amazonMinReviewCount, {
+      min: 0,
+      max: 10000000,
+      label: 'Amazon 最低评论数',
+    })),
+    amazonLinks,
+    amazonRawInputs,
     shopeeSite: normalizeShopeeSite(input.shopeeSite || input.collectShopeeSite),
     shopeeMaxPrice: normalizeNumber(input.shopeeMaxPrice || input.collectShopeeMaxPrice, DEFAULT_COLLECT_OPTIONS.shopeeMaxPrice, {
       min: 0.01,
@@ -176,6 +248,9 @@ function normalizeOptions(input = {}) {
       max: 100,
       label: '最低评分',
     })),
+    requireKeywordMatch: input.requireKeywordMatch === undefined && input.collectRequireKeywordMatch === undefined
+      ? source === COLLECT_SOURCE_1688 && links.length === 0
+      : toBoolean(input.requireKeywordMatch ?? input.collectRequireKeywordMatch, true),
     safeMode: toBoolean(input.safeMode, DEFAULT_COLLECT_OPTIONS.safeMode),
     skipFilters: toBoolean(input.skipFilters || input.collectSkipFilters, DEFAULT_COLLECT_OPTIONS.skipFilters),
     headless: toBoolean(input.headless, DEFAULT_COLLECT_OPTIONS.headless),
@@ -200,6 +275,31 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
     if (arg === '--source' || arg === '--collect-source') {
       input.source = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--amazon-mode' || arg === '--collect-amazon-mode') {
+      input.amazonMode = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--amazon-marketplace' || arg === '--collect-amazon-marketplace') {
+      input.amazonMarketplace = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--amazon-max-price-usd' || arg === '--collect-amazon-max-price-usd') {
+      input.amazonMaxPriceUsd = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--amazon-min-rating' || arg === '--collect-amazon-min-rating') {
+      input.amazonMinRating = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--amazon-min-review-count' || arg === '--collect-amazon-min-review-count') {
+      input.amazonMinReviewCount = next;
       index += 1;
       continue;
     }
@@ -460,6 +560,132 @@ function includesAny(text, terms = []) {
   return terms.find((term) => normalized.includes(normalizeText(term)));
 }
 
+function compactKeywordText(value = '') {
+  return normalizeText(value).replace(/[^a-z0-9\u4e00-\u9fff]+/gi, '');
+}
+
+function buildKeywordMatchTerms(keyword = '') {
+  const compactKeyword = compactKeywordText(keyword);
+  if (!compactKeyword || compactKeyword === '详情链接') {
+    return [];
+  }
+  const chineseOnly = compactKeyword.replace(/[^\u4e00-\u9fff]/g, '');
+  if (chineseOnly && chineseOnly.length === compactKeyword.length) {
+    if (chineseOnly.length <= 2) {
+      return [chineseOnly];
+    }
+    if (chineseOnly.length === 3) {
+      return [chineseOnly.slice(0, 2), chineseOnly.slice(2)];
+    }
+    return [chineseOnly.slice(0, 2), chineseOnly.slice(-2)];
+  }
+  return normalizeText(keyword)
+    .split(/[^a-z0-9\u4e00-\u9fff]+/i)
+    .map((term) => compactKeywordText(term))
+    .filter((term) => term.length >= 2 || /[\u4e00-\u9fff]/.test(term));
+}
+
+function isKeywordRelevantCandidate(candidate = {}, keyword = '') {
+  const compactKeyword = compactKeywordText(keyword || candidate.keyword);
+  if (!compactKeyword || compactKeyword === '详情链接') {
+    return true;
+  }
+  const haystack = compactKeywordText([
+    candidate.title,
+    candidate.shopName,
+    candidate.description,
+    candidate.sourceText,
+  ].filter(Boolean).join(' '));
+  if (!haystack) {
+    return false;
+  }
+  if (haystack.includes(compactKeyword)) {
+    return true;
+  }
+  const terms = buildKeywordMatchTerms(keyword || candidate.keyword);
+  return terms.length === 0 || terms.every((term) => haystack.includes(term));
+}
+
+function doesTextMatchKeyword(text = '', keyword = '') {
+  const compactKeyword = compactKeywordText(keyword);
+  if (!compactKeyword || compactKeyword === '详情链接') {
+    return true;
+  }
+  const haystack = compactKeywordText(text);
+  if (!haystack) {
+    return false;
+  }
+  if (haystack.includes(compactKeyword)) {
+    return true;
+  }
+  const terms = buildKeywordMatchTerms(keyword);
+  return terms.length === 0 || terms.every((term) => haystack.includes(term));
+}
+
+function isLikely1688SearchSnapshot(snapshot = {}) {
+  const url = String(snapshot.url || '');
+  const bodyText = String(snapshot.bodyText || '');
+  return /s\.1688\.com|offer_search|selloffer/i.test(url)
+    || (
+      Number(snapshot.offerLikeCount || 0) > 0
+      && /(综合|销量|价格|起订量|找货源|所在地区|商家特色|经营模式|已售)/.test(bodyText)
+    );
+}
+
+async function get1688SearchPageSnapshot(page) {
+  return page.evaluate(() => {
+    const searchInput = document.querySelector([
+      'input[name="keywords"]',
+      'input[name="keyword"]',
+      'input[placeholder*="搜索"]',
+      'input[placeholder*="请输入"]',
+      'input[type="search"]',
+      'input[type="text"]',
+      'textarea',
+    ].join(', '));
+    return {
+      url: window.location.href,
+      title: document.title || '',
+      inputValue: searchInput ? String(searchInput.value || searchInput.getAttribute('value') || '') : '',
+      bodyText: document.body ? document.body.innerText.replace(/\s+/g, ' ').slice(0, 1800) : '',
+      offerLikeCount: document.querySelectorAll('[data-renderkey], [data-offer-id], [data-offerid], a[href*="/offer/"], img[alt]').length,
+    };
+  }).catch(() => ({
+    url: page.url(),
+    title: '',
+    inputValue: '',
+    bodyText: '',
+    offerLikeCount: 0,
+  }));
+}
+
+async function isKeywordSearchResultPage(page, keyword = '') {
+  if (!page || page.isClosed()) {
+    return false;
+  }
+  const snapshot = await get1688SearchPageSnapshot(page);
+  return isLikely1688SearchSnapshot(snapshot)
+    && doesTextMatchKeyword(`${snapshot.url} ${snapshot.title} ${snapshot.inputValue} ${snapshot.bodyText}`, keyword);
+}
+
+async function findKeywordSearchResultPage(browser, keyword = '', preferredPages = []) {
+  const pages = [
+    ...preferredPages,
+    ...((await browser.pages().catch(() => [])) || []),
+  ];
+  const seen = new Set();
+  for (const page of pages.filter(Boolean).reverse()) {
+    if (seen.has(page)) {
+      continue;
+    }
+    seen.add(page);
+    if (await isKeywordSearchResultPage(page, keyword)) {
+      return page;
+    }
+  }
+  return null;
+}
+
 function unique(values = []) {
   return Array.from(new Set(values.filter(Boolean)));
 }
@@ -567,6 +793,11 @@ function evaluateCandidate(candidate = {}, rawOptions = DEFAULT_COLLECT_OPTIONS)
   const customExcludedHit = includesAny(haystack, options.excludedTerms);
   if (customExcludedHit) {
     return { decision: 'reject', score: 0, reason: `命中排除词：${customExcludedHit}` };
+  }
+
+  const keyword = String(candidate.keyword || '').trim();
+  if (options.requireKeywordMatch !== false && keyword && !isKeywordRelevantCandidate(candidate, keyword)) {
+    return { decision: 'reject', score: 0, reason: `与当前关键词“${keyword}”不匹配。` };
   }
 
   if (options.safeMode) {
@@ -758,6 +989,7 @@ async function claimCommonCollectBoxDetailsWithRetry(commonCollectBoxDetailIds, 
 }
 
 async function collectSourceLinksWithMiaoshouApi(sourceLinks = [], {
+  source = COLLECT_SOURCE_1688,
   platform = DEFAULT_COLLECTION_PLATFORM,
   request = requestMiaoshouApi,
   fetchServiceRetryCount = 0,
@@ -769,7 +1001,10 @@ async function collectSourceLinksWithMiaoshouApi(sourceLinks = [], {
   claimServiceRetryDelayMs = DEFAULT_CLAIM_SERVICE_RETRY_DELAY_MS,
   sleepFn = sleep,
 } = {}) {
-  const collectLinks = normalizeSourceLinks(sourceLinks);
+  const collectSource = normalizeCollectSource(source);
+  const collectLinks = collectSource === COLLECT_SOURCE_AMAZON
+    ? normalizeAmazonProductInputs(sourceLinks).map((item) => item.url)
+    : normalizeSourceLinks(sourceLinks);
   if (collectLinks.length === 0) {
     throw new Error('没有可采集的货源链接。');
   }
@@ -803,7 +1038,8 @@ async function collectSourceLinksWithMiaoshouApi(sourceLinks = [], {
   }
 
   if (claimInitialDelayMs > 0) {
-    log(`公共采集箱已生成：${commonCollectBoxDetailIds.join(', ')}，等待 ${Math.round(claimInitialDelayMs / 1000)} 秒后认领到 ${platform} 采集箱。`);
+    const sourceHint = collectSource === COLLECT_SOURCE_AMAZON ? 'Amazon 货源通常处理较慢，' : '';
+    log(`公共采集箱已生成：${commonCollectBoxDetailIds.join(', ')}，${sourceHint}等待 ${Math.round(claimInitialDelayMs / 1000)} 秒后认领到 ${platform} 采集箱。`);
     await sleepFn(claimInitialDelayMs);
   }
 
@@ -824,6 +1060,12 @@ async function collectSourceLinksWithMiaoshouApi(sourceLinks = [], {
       wrapped.cause = error;
       throw wrapped;
     }
+    if (collectSource === COLLECT_SOURCE_AMAZON && isPendingMiaoshouCollectionError(error)) {
+      const totalWaitSeconds = Math.round((claimInitialDelayMs + claimRetryCount * claimRetryDelayMs) / 1000);
+      const wrapped = new Error(`Amazon 货源已进入妙手公共采集箱（ID：${commonCollectBoxDetailIds.join(', ')}），但妙手在约 ${totalWaitSeconds} 秒内仍未处理完成，暂时还不能认领到 TikTok 采集箱。原始错误：${error.message || String(error)}`);
+      wrapped.cause = error;
+      throw wrapped;
+    }
     throw error;
   }
 
@@ -839,6 +1081,21 @@ async function collectSourceLinksWithMiaoshouApi(sourceLinks = [], {
       && claimResult.data.platformCollectBoxDetailIdMap
       ? claimResult.data.platformCollectBoxDetailIdMap
       : {},
+  };
+}
+
+function buildCollectLinkRetryOptions(source = COLLECT_SOURCE_1688) {
+  const collectSource = normalizeCollectSource(source);
+  const amazonSource = collectSource === COLLECT_SOURCE_AMAZON;
+  return {
+    source: collectSource,
+    fetchServiceRetryCount: DEFAULT_FETCH_SERVICE_RETRY_COUNT,
+    fetchServiceRetryDelayMs: DEFAULT_FETCH_SERVICE_RETRY_DELAY_MS,
+    claimInitialDelayMs: amazonSource ? AMAZON_CLAIM_INITIAL_DELAY_MS : DEFAULT_CLAIM_INITIAL_DELAY_MS,
+    claimRetryCount: amazonSource ? AMAZON_CLAIM_RETRY_COUNT : DEFAULT_CLAIM_RETRY_COUNT,
+    claimRetryDelayMs: amazonSource ? AMAZON_CLAIM_RETRY_DELAY_MS : DEFAULT_CLAIM_RETRY_DELAY_MS,
+    claimServiceRetryCount: DEFAULT_CLAIM_SERVICE_RETRY_COUNT,
+    claimServiceRetryDelayMs: DEFAULT_CLAIM_SERVICE_RETRY_DELAY_MS,
   };
 }
 
@@ -1060,13 +1317,57 @@ async function maximizeBrowserWindow(page) {
   }
 }
 
+async function getBrowserWindowBounds(page) {
+  if (!page || page.isClosed()) {
+    return null;
+  }
+
+  const session = await page.target().createCDPSession().catch(() => null);
+  if (!session) {
+    return null;
+  }
+
+  try {
+    const windowInfo = await session.send('Browser.getWindowForTarget').catch(() => null);
+    const windowId = windowInfo && windowInfo.windowId;
+    if (!Number.isFinite(windowId)) {
+      return null;
+    }
+    return await session.send('Browser.getWindowBounds', { windowId }).catch(() => null);
+  } finally {
+    await session.detach().catch(() => {});
+  }
+}
+
 async function ensureLargeBrowserViewport(page) {
+  if (!page || page.isClosed()) {
+    return;
+  }
+
+  await maximizeBrowserWindow(page);
+  await sleep(300);
+
+  const windowBounds = await getBrowserWindowBounds(page);
+  const currentViewport = await page.evaluate(() => ({
+    width: window.innerWidth || document.documentElement.clientWidth || 0,
+    height: window.innerHeight || document.documentElement.clientHeight || 0,
+  })).catch(() => null);
+  const viewportWidth = Math.max(
+    DEFAULT_BROWSER_WINDOW_WIDTH,
+    Math.floor(Number(windowBounds && windowBounds.width) || 0),
+    Math.floor(Number(currentViewport && currentViewport.width) || 0),
+  );
+  const viewportHeight = Math.max(
+    DEFAULT_BROWSER_WINDOW_HEIGHT,
+    Math.floor(Number(currentViewport && currentViewport.height) || 0),
+    Math.floor((Number(windowBounds && windowBounds.height) || 0) - 120),
+  );
+
   await page.setViewport({
-    width: DEFAULT_BROWSER_WINDOW_WIDTH,
-    height: DEFAULT_BROWSER_WINDOW_HEIGHT,
+    width: viewportWidth,
+    height: viewportHeight,
     deviceScaleFactor: 1,
   }).catch(() => {});
-  await maximizeBrowserWindow(page);
 }
 
 function encode1688Keyword(value = '') {
@@ -1332,7 +1633,7 @@ async function findVisibleElement(page, selectors = []) {
   return null;
 }
 
-async function searchKeywordFromHome(page, keyword) {
+async function searchKeywordFromHome(browser, page, keyword) {
   log(`打开 1688 首页，在首页搜索框输入关键词：${keyword}`);
   await page.goto(DEFAULT_1688_HOME_URL, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT });
   await sleep(1800);
@@ -1355,10 +1656,40 @@ async function searchKeywordFromHome(page, keyword) {
   await sleep(200);
   await input.type(keyword, { delay: 80 });
   await sleep(300);
+  const openerTarget = page.target();
+  const existingTargets = new Set(browser.targets());
+  const newTabPromise = browser.waitForTarget((target) => {
+    if (target.type() !== 'page') {
+      return false;
+    }
+    if (existingTargets.has(target)) {
+      return false;
+    }
+    const opener = typeof target.opener === 'function' ? target.opener() : null;
+    if (opener && opener === openerTarget) {
+      return true;
+    }
+    return /1688\.com|about:blank/i.test(String(target.url() || ''));
+  }, { timeout: 8000 })
+    .then((target) => target.page())
+    .catch(() => null);
   const navigation = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT }).catch(() => null);
   await page.keyboard.press('Enter');
+  const openedPage = await Promise.race([
+    newTabPromise,
+    navigation.then(() => null),
+    sleep(5000).then(() => null),
+  ]);
   await navigation;
   await sleep(1500);
+  const searchPage = await findKeywordSearchResultPage(browser, keyword, [openedPage, page]);
+  if (searchPage && searchPage !== page) {
+    await searchPage.bringToFront().catch(() => {});
+    await ensureLargeBrowserViewport(searchPage);
+    log(`1688 搜索结果已切换到新标签页：${searchPage.url()}`);
+    return searchPage;
+  }
+  return page;
 }
 
 function normalizeOfferUrl(rawUrl = '') {
@@ -2040,11 +2371,16 @@ function compactCollectionItem(item = {}) {
   return {
     title: item.title || '',
     url: item.url || '',
+    asin: item.asin || '',
+    amazonUrl: item.amazonUrl || '',
     shopeeTitle: item.shopeeTitle || '',
     shopeeUrl: item.shopeeUrl || '',
     source1688Title: item.source1688Title || '',
     source1688Url: item.source1688Url || '',
     price: Number.isFinite(Number(item.price)) ? Number(item.price) : null,
+    priceUsd: Number.isFinite(Number(item.priceUsd)) ? Number(item.priceUsd) : null,
+    rating: Number.isFinite(Number(item.rating)) ? Number(item.rating) : null,
+    reviewCount: Number.isFinite(Number(item.reviewCount)) ? Number(item.reviewCount) : null,
     unitPrice: Number.isFinite(Number(item.unitPrice)) ? Number(item.unitPrice) : null,
     freightPrice: Number.isFinite(Number(item.freightPrice)) ? Number(item.freightPrice) : null,
     minOrderQuantity: Number.isFinite(Number(item.minOrderQuantity)) ? Number(item.minOrderQuantity) : null,
@@ -2059,6 +2395,29 @@ function compactCollectionItem(item = {}) {
     commonCollectBoxDetailId: item.commonCollectBoxDetailId || null,
     stage: item.stage || '',
   };
+}
+
+function filterRecentlyCollectedCandidates(candidates = [], source = COLLECT_SOURCE_1688) {
+  const { accepted, duplicates } = filterRecentCollectionDuplicates(candidates, {
+    source,
+    windowDays: DEFAULT_DEDUPE_WINDOW_DAYS,
+  });
+  for (const duplicate of duplicates) {
+    const label = duplicate.title || duplicate.asin || duplicate.url || duplicate.dedupeKey || '未知商品';
+    log(`跳过最近 7 天已采集商品：${label}；${duplicate.reason}`);
+  }
+  return { accepted, duplicates };
+}
+
+function rememberCollectedItems(items = [], source = COLLECT_SOURCE_1688) {
+  const records = markCollectedItems(items, {
+    source,
+    windowDays: DEFAULT_DEDUPE_WINDOW_DAYS,
+  });
+  if (records.length > 0) {
+    log(`已记录 ${records.length} 个成功采集商品，最近 ${DEFAULT_DEDUPE_WINDOW_DAYS} 天再次采集会自动跳过。`);
+  }
+  return records;
 }
 
 async function runShopeeCollection(options) {
@@ -2106,7 +2465,12 @@ async function runShopeeCollection(options) {
       });
 
       await searchShopeeKeyword(page, keyword, options);
-      const shopeeCandidates = await extractShopeeCandidates(page, keyword, options);
+      const shopeeDedupe = filterRecentlyCollectedCandidates(
+        await extractShopeeCandidates(page, keyword, options),
+        COLLECT_SOURCE_SHOPEE,
+      );
+      duplicates.push(...shopeeDedupe.duplicates);
+      const shopeeCandidates = shopeeDedupe.accepted;
 
       for (const shopeeCandidate of shopeeCandidates) {
         if (collected.length >= options.count || reviewedCount >= options.maxCandidates) {
@@ -2168,6 +2532,7 @@ async function runShopeeCollection(options) {
             platformCollectBoxDetailIdMap: collectResult.platformCollectBoxDetailIdMap,
           };
           collected.push(resultItem);
+          rememberCollectedItems([resultItem], COLLECT_SOURCE_SHOPEE);
           log(`采集成功：${shopeeCandidate.title}；1688 同款 ${matched.source.title}。`);
           emitProgress({
             phase: 'collect',
@@ -2237,7 +2602,282 @@ async function runShopeeCollection(options) {
   }
 }
 
+function buildAmazonLinkCandidates(options = {}) {
+  const skipped = [];
+  const validInputs = new Set((options.amazonLinks || []).map((item) => item.input));
+  const validAsins = new Set((options.amazonLinks || []).map((item) => item.asin));
+
+  for (const input of options.amazonRawInputs || []) {
+    const normalized = normalizeAmazonProductInputs([input])[0];
+    if (!normalized) {
+      skipped.push({
+        source: COLLECT_SOURCE_AMAZON,
+        marketplace: 'US',
+        title: input,
+        url: '',
+        reason: 'invalid_amazon_link_or_asin',
+      });
+      continue;
+    }
+    if (!validInputs.has(input) && validAsins.has(normalized.asin)) {
+      skipped.push({
+        source: COLLECT_SOURCE_AMAZON,
+        marketplace: 'US',
+        asin: normalized.asin,
+        title: input,
+        url: normalized.url,
+        reason: 'duplicate_asin',
+      });
+    }
+  }
+
+  const candidates = (options.amazonLinks || []).map((item) => ({
+    source: COLLECT_SOURCE_AMAZON,
+    marketplace: 'US',
+    asin: item.asin,
+    title: item.asin,
+    url: item.url,
+    amazonUrl: item.url,
+    priceUsd: null,
+    rating: null,
+    reviewCount: null,
+    keyword: 'Amazon link/ASIN',
+    reason: 'Amazon link/ASIN input',
+  }));
+
+  return { candidates, skipped };
+}
+
+async function resolveAmazonCandidates(options) {
+  if (options.amazonMode === 'links' || options.amazonLinks.length > 0) {
+    return {
+      ...buildAmazonLinkCandidates(options),
+      reviewedCount: options.amazonRawInputs.length,
+    };
+  }
+
+  if (options.keywords.length === 0) {
+    throw new Error('Amazon 关键词采集需要先填写关键词，或切换为链接/ASIN 模式。');
+  }
+
+  const profileDir = getProfileDir();
+  const browser = await puppeteer.launch({
+    executablePath: getChromeExecutablePath(),
+    headless: options.headless,
+    userDataDir: profileDir,
+    defaultViewport: null,
+    args: [
+      `--window-size=${DEFAULT_BROWSER_WINDOW_WIDTH},${DEFAULT_BROWSER_WINDOW_HEIGHT}`,
+      '--start-maximized',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-features=Translate',
+    ],
+  });
+
+  try {
+    const page = (await browser.pages())[0] || await browser.newPage();
+    page.setDefaultTimeout(DEFAULT_TIMEOUT);
+    page.setDefaultNavigationTimeout(DEFAULT_TIMEOUT);
+    await ensureLargeBrowserViewport(page);
+    const result = await collectAmazonCandidatesFromKeywords(page, options);
+    return {
+      candidates: result.candidates,
+      skipped: result.skipped,
+      reviewedCount: result.reviewedCount,
+    };
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+async function enrichAmazonCandidatesWithDetails(candidates = [], options = {}) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return [];
+  }
+
+  const profileDir = getProfileDir();
+  const browser = await puppeteer.launch({
+    executablePath: getChromeExecutablePath(),
+    headless: options.headless,
+    userDataDir: profileDir,
+    defaultViewport: null,
+    args: [
+      `--window-size=${DEFAULT_BROWSER_WINDOW_WIDTH},${DEFAULT_BROWSER_WINDOW_HEIGHT}`,
+      '--start-maximized',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-features=Translate',
+    ],
+  });
+
+  try {
+    const page = (await browser.pages())[0] || await browser.newPage();
+    page.setDefaultTimeout(DEFAULT_TIMEOUT);
+    page.setDefaultNavigationTimeout(DEFAULT_TIMEOUT);
+    await ensureLargeBrowserViewport(page);
+
+    const enriched = [];
+    for (const candidate of candidates) {
+      try {
+        const detail = await extractAmazonProductDetail(page, candidate, options);
+        enriched.push(detail);
+        if (detail.title && detail.title !== candidate.asin) {
+          log(`Amazon 详情已补全：${detail.asin || candidate.asin}；${detail.title}${detail.weightText ? `；重量 ${detail.weightText}` : ''}`);
+        }
+      } catch (error) {
+        enriched.push(candidate);
+        log(`Amazon 详情补全失败：${candidate.asin || candidate.url}；${error.message || String(error)}`);
+      }
+      await sleep(600);
+    }
+    return enriched;
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+async function runAmazonCollection(options) {
+  log('采集方式：Amazon.com 浏览器自动化采集，合格商品通过妙手开放 API 采集并认领到 TikTok 采集箱。');
+  const collected = [];
+  const failed = [];
+  const duplicates = [];
+  const detailCandidateLimit = Math.min(
+    Math.max(Number(options.count || 1), Number(options.count || 1) * 3),
+    Number(options.maxCandidates || Math.max(Number(options.count || 1), Number(options.count || 1) * 3)),
+  );
+  const { candidates, skipped, reviewedCount } = await resolveAmazonCandidates({
+    ...options,
+    count: detailCandidateLimit,
+  });
+  const amazonDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_AMAZON);
+  duplicates.push(...amazonDedupe.duplicates);
+  const enrichedCandidates = await enrichAmazonCandidatesWithDetails(
+    amazonDedupe.accepted.slice(0, detailCandidateLimit),
+    options,
+  );
+  const detailPriceFilter = filterAmazonCandidatesWithDetailPrices(enrichedCandidates);
+  for (const candidate of detailPriceFilter.skipped) {
+    const skipReason = candidate.reason || 'missing_amazon_detail_price';
+    const readableReason = skipReason === 'missing_amazon_detail_price'
+      ? '详情页未读取到标准价格，避免妙手来源价格为空。'
+      : skipReason;
+    log(`跳过 Amazon 商品：${candidate.title || candidate.asin || candidate.url}；${readableReason}`);
+  }
+  skipped.push(...detailPriceFilter.skipped);
+  const candidatesToCollect = detailPriceFilter.accepted.slice(0, options.count);
+
+  if (candidatesToCollect.length === 0) {
+    log('没有找到可采集的 Amazon 商品候选。');
+  } else {
+    log(`Amazon 搜索页已读取 ${reviewedCount} 个候选，筛选出 ${candidatesToCollect.length} 个待提交妙手的商品；浏览器可以关闭，接下来等待妙手处理公共采集箱。`);
+  }
+
+  if (candidatesToCollect.length > 0) {
+    const firstCandidate = candidatesToCollect[0];
+    emitProgress({
+      phase: 'collect',
+      completed: 0,
+      total: options.count,
+      totalCount: options.count,
+      overallPercent: 0,
+      detailId: firstCandidate.title || firstCandidate.asin || firstCandidate.url,
+    });
+
+    try {
+      const candidateUrls = candidatesToCollect.map((candidate) => candidate.url);
+      const collectResult = await collectSourceLinksWithMiaoshouApi(
+        candidateUrls,
+        buildCollectLinkRetryOptions(COLLECT_SOURCE_AMAZON),
+      );
+      for (const [index, candidate] of candidatesToCollect.entries()) {
+        const resultItem = {
+          title: candidate.title || candidate.asin,
+          url: candidate.url,
+          asin: candidate.asin,
+          amazonUrl: candidate.url,
+          price: candidate.priceUsd,
+          priceUsd: candidate.priceUsd,
+          rating: candidate.rating,
+          reviewCount: candidate.reviewCount,
+          weightGrams: candidate.weightGrams,
+          weightText: candidate.weightText,
+          keyword: candidate.keyword,
+          reason: candidate.reason || 'Amazon 商品已通过妙手接口采集。',
+          pluginMessage: collectResult.message,
+          apiMessage: collectResult.message,
+          commonCollectBoxDetailId: collectResult.commonCollectBoxDetailIds[index] || null,
+          platformCollectBoxDetailIdMap: collectResult.platformCollectBoxDetailIdMap,
+        };
+        collected.push(resultItem);
+      }
+      rememberCollectedItems(collected, COLLECT_SOURCE_AMAZON);
+      log(`Amazon 商品批量采集成功：${collected.length}/${candidatesToCollect.length} 个商品已认领到 TikTok 采集箱。`);
+    } catch (error) {
+      if (isMiaoshouServiceUnavailableError(error)) {
+        log(`妙手服务异常，停止本次采集：${error.message || String(error)}`);
+        throw error;
+      }
+      for (const candidate of candidatesToCollect) {
+        failed.push({
+          title: candidate.title || candidate.asin,
+          url: candidate.url,
+          asin: candidate.asin,
+          amazonUrl: candidate.url,
+          price: candidate.priceUsd,
+          priceUsd: candidate.priceUsd,
+          rating: candidate.rating,
+          reviewCount: candidate.reviewCount,
+          weightGrams: candidate.weightGrams,
+          weightText: candidate.weightText,
+          keyword: candidate.keyword,
+          error: error.message || String(error),
+        });
+      }
+      log(`Amazon 商品批量采集异常：${error.message || String(error)}`);
+    }
+  }
+
+  const failedResults = failed.map((item) => ({
+    ...item,
+    error: item.error || '采集失败',
+    stage: 'collect',
+  }));
+
+  return {
+    mode: 'amazon-collection',
+    requestedCount: options.count,
+    totalCount: collected.length + duplicates.length + failed.length,
+    successCount: collected.length,
+    errorCount: failed.length,
+    skippedCount: skipped.length,
+    duplicateCount: duplicates.length,
+    reviewedCount,
+    params: {
+      source: options.source,
+      amazonMode: options.amazonMode,
+      amazonMarketplace: options.amazonMarketplace,
+      keywords: options.keywords,
+      links: options.links,
+      amazonMaxPriceUsd: options.amazonMaxPriceUsd,
+      amazonMinRating: options.amazonMinRating,
+      amazonMinReviewCount: options.amazonMinReviewCount,
+      excludedTerms: options.excludedTerms,
+    },
+    results: [
+      ...collected.map(compactCollectionItem),
+      ...failedResults.map(compactCollectionItem),
+    ],
+    duplicates: duplicates.map(compactCollectionItem),
+    skipped: skipped.slice(0, 50).map(compactCollectionItem),
+  };
+}
+
 async function runCollection(options) {
+  if (options.source === COLLECT_SOURCE_AMAZON) {
+    return runAmazonCollection(options);
+  }
+
   if (options.source === COLLECT_SOURCE_SHOPEE && options.links.length === 0) {
     return runShopeeCollection(options);
   }
@@ -2296,13 +2936,15 @@ async function runCollection(options) {
       const candidates = options.links.length > 0
         ? options.links.map((url) => ({ title: url, url, price: '', keyword }))
         : await (async () => {
-          await searchKeywordFromHome(page, keyword);
-          const searchCandidates = await extractSearchCandidates(page, keyword, options);
+          const searchPage = await searchKeywordFromHome(browser, page, keyword);
+          const searchCandidates = await extractSearchCandidates(searchPage, keyword, options);
           log(`关键词 ${keyword} 找到候选商品 ${searchCandidates.length} 个。`);
           return searchCandidates;
         })();
+      const sourceDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_1688);
+      duplicates.push(...sourceDedupe.duplicates);
 
-      for (const candidate of candidates) {
+      for (const candidate of sourceDedupe.accepted) {
         if (collected.length >= options.count || reviewedCount >= options.maxCandidates) {
           break;
         }
@@ -2354,6 +2996,7 @@ async function runCollection(options) {
           };
           if (collectResult.status === 'success') {
             collected.push(resultItem);
+            rememberCollectedItems([resultItem], COLLECT_SOURCE_1688);
           } else {
             failed.push({ ...resultItem, error: collectResult.message });
             log(`商品采集失败：${detailCandidate.title || detailCandidate.url}；${collectResult.message}`);
@@ -2445,6 +3088,7 @@ module.exports = {
   DEFAULT_COLLECT_OPTIONS,
   COMMON_COLLECT_CLAIMED_PATH,
   COMMON_COLLECT_FETCH_ITEM_PATH,
+  buildCollectLinkRetryOptions,
   buildShopeeSearchUrl,
   buildPurchasePriceWithFreight,
   buildSearchUrl,

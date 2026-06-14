@@ -4,33 +4,35 @@ const path = require('path');
 
 const rootDir = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(rootDir, 'miaoshou_auto.js'), 'utf8');
+const configSource = fs.readFileSync(path.join(rootDir, 'lib', 'ai_provider_config.js'), 'utf8');
+const clientSource = fs.readFileSync(path.join(rootDir, 'lib', 'ai_chat_clients.js'), 'utf8');
 const envExample = fs.readFileSync(path.join(rootDir, '.env.example'), 'utf8');
 
 assert.ok(
-  source.includes("const DEFAULT_MIMO_MODEL = 'mimo-v2.5-pro';"),
+  configSource.includes("const DEFAULT_MIMO_MODEL = 'mimo-v2.5-pro';"),
   'MiMo main model should default to mimo-v2.5-pro.',
 );
 assert.ok(
-  source.includes("const DEFAULT_MIMO_IMAGE_MODEL = 'mimo-v2.5';"),
+  configSource.includes("const DEFAULT_MIMO_IMAGE_MODEL = 'mimo-v2.5';"),
   'MiMo image calls should default to mimo-v2.5 because mimo-v2.5-pro does not support image input.',
 );
 assert.ok(
-  source.includes('const DEFAULT_TITLE_OPTIMIZE_MODEL = DEFAULT_DEEPSEEK_MODEL;')
-    && source.includes('const DEFAULT_SKU_TRANSLATION_MODEL = DEFAULT_DEEPSEEK_MODEL;')
-    && source.includes('const DEFAULT_IMAGE_AUDIT_MODEL = DEFAULT_MIMO_IMAGE_MODEL;')
-    && source.includes('const DEFAULT_WEIGHT_ESTIMATION_MODEL = DEFAULT_MIMO_IMAGE_MODEL;'),
+  configSource.includes('const DEFAULT_TITLE_OPTIMIZE_MODEL = DEFAULT_DEEPSEEK_MODEL;')
+    && configSource.includes('const DEFAULT_SKU_TRANSLATION_MODEL = DEFAULT_DEEPSEEK_MODEL;')
+    && configSource.includes('const DEFAULT_IMAGE_AUDIT_MODEL = DEFAULT_MIMO_IMAGE_MODEL;')
+    && configSource.includes('const DEFAULT_WEIGHT_ESTIMATION_MODEL = DEFAULT_MIMO_IMAGE_MODEL;'),
   'Edit workflow function models should default text tasks to DeepSeek and vision tasks to MiMo.',
 );
 assert.ok(
-  source.includes('process.env.Mimo_API_KEY || process.env.MIMO_API_KEY'),
+  configSource.includes('process.env.Mimo_API_KEY || process.env.MIMO_API_KEY'),
   'MiMo should support the mixed-case Mimo_API_KEY already used in .env.',
 );
 assert.ok(
-  source.includes('process.env.Mimo_BASE_URL || process.env.MIMO_BASE_URL'),
+  configSource.includes('process.env.Mimo_BASE_URL || process.env.MIMO_BASE_URL'),
   'MiMo should support the mixed-case Mimo_BASE_URL already used in .env.',
 );
 assert.ok(
-  source.includes('async function createMimoChatCompletion'),
+  clientSource.includes('async function createMimoChatCompletion'),
   'MiMo should have its own chat-completion caller.',
 );
 assert.ok(
@@ -59,16 +61,16 @@ assert.ok(
   'IMAGE_AUDIT_MODEL',
   'WEIGHT_ESTIMATION_MODEL',
 ].forEach((key) => {
-  assert.ok(source.includes(`process.env.${key}`), `Edit workflow should read ${key} from configuration.`);
+  assert.ok(configSource.includes(`process.env.${key}`), `Edit workflow should read ${key} from configuration.`);
   assert.ok(envExample.includes(`${key}=`), `.env.example should document ${key}.`);
 });
 assert.ok(
-  /function isKimiModel[\s\S]*\^\(\?:kimi-\|moonshot-\)/.test(source)
-    && /resolveAiProviderForRequest[\s\S]*isKimiModel\(model\)/.test(source),
+  /function isKimiModel[\s\S]*\^\(\?:kimi-\|moonshot-\)/.test(configSource)
+    && /resolveAiProviderForRequest[\s\S]*isKimiModel\(model\)/.test(configSource),
   'Text AI routing should send Kimi/Moonshot models to Kimi even when the global default provider is DeepSeek.',
 );
 assert.ok(
-  /resolveAiProviderForRequest[\s\S]*\^mimo-/.test(source)
+  /resolveAiProviderForRequest[\s\S]*\^mimo-/.test(configSource)
     && /resolvedProvider === 'mimo'[\s\S]*createMimoChatCompletion/.test(source),
   'Text AI routing should send MiMo models to MiMo when a text feature selects MiMo.',
 );
@@ -79,10 +81,10 @@ assert.ok(
   'Image audit and weight estimation should support Kimi and MiMo vision models.',
 );
 assert.ok(
-  /function getTitleOptimizeModel[\s\S]*DEFAULT_TITLE_OPTIMIZE_MODEL/.test(source)
-    && /function getSkuTranslationModel[\s\S]*DEFAULT_SKU_TRANSLATION_MODEL/.test(source)
-    && /function getImageAuditModel[\s\S]*DEFAULT_IMAGE_AUDIT_MODEL/.test(source)
-    && /function getWeightEstimationModel[\s\S]*DEFAULT_WEIGHT_ESTIMATION_MODEL/.test(source),
+  /function getTitleOptimizeModel[\s\S]*DEFAULT_TITLE_OPTIMIZE_MODEL/.test(configSource)
+    && /function getSkuTranslationModel[\s\S]*DEFAULT_SKU_TRANSLATION_MODEL/.test(configSource)
+    && /function getImageAuditModel[\s\S]*DEFAULT_IMAGE_AUDIT_MODEL/.test(configSource)
+    && /function getWeightEstimationModel[\s\S]*DEFAULT_WEIGHT_ESTIMATION_MODEL/.test(configSource),
   'Runtime model helpers should use the same feature defaults as the account config page.',
 );
 assert.ok(

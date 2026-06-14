@@ -34,10 +34,29 @@ assert.ok(
   'Server should validate collection task options.',
 );
 assert.ok(
-  serverSource.includes('collectSource: normalizeCollectSource')
+  serverSource.includes('function buildServerCapabilities()')
+    && serverSource.includes('collectSources: [COLLECT_SOURCE_1688, COLLECT_SOURCE_AMAZON]')
+    && serverSource.includes('amazonCollection: true')
+    && serverSource.includes('capabilities: buildServerCapabilities()'),
+  'Server status should expose collection source capabilities so the UI can detect stale servers.',
+);
+assert.ok(
+  (serverSource.includes('collectSource: normalizeCollectSource') || serverSource.includes('const collectSource = normalizeCollectSource'))
     && serverSource.includes('collectShopeeSite: normalizeShopeeSite')
     && serverSource.includes('collectShopeeMaxPrice: normalizeCollectNumber'),
   'Server should validate Shopee automatic collection options.',
+);
+assert.ok(
+  serverSource.includes("const COLLECT_SOURCE_AMAZON = 'amazon'")
+    && /normalized === COLLECT_SOURCE_AMAZON/.test(serverSource),
+  'Server should accept Amazon as a collection source.',
+);
+assert.ok(
+  serverSource.includes('collectAmazonMode')
+    && serverSource.includes('collectAmazonMaxPriceUsd')
+    && serverSource.includes('collectAmazonMinRating')
+    && serverSource.includes('collectAmazonMinReviewCount'),
+  'Server should validate and serialize Amazon collection options.',
 );
 assert.ok(
   serverSource.includes('function startCollectRun(options)'),
@@ -67,6 +86,19 @@ assert.ok(
   'Collection command should pass Shopee automatic collection parameters to the script.',
 );
 assert.ok(
+  serverSource.includes("'--amazon-mode'")
+    && serverSource.includes("'--amazon-max-price-usd'")
+    && serverSource.includes("'--amazon-min-rating'")
+    && serverSource.includes("'--amazon-min-review-count'"),
+  'Collection command should pass Amazon browser collection parameters to the script.',
+);
+assert.ok(
+  serverSource.includes('Amazon.com')
+    && serverSource.includes('collectAmazonMode ===')
+    && serverSource.includes('Amazon 最低评分'),
+  'Collection logs should describe Amazon collection mode and filters.',
+);
+assert.ok(
   serverSource.includes('collectKeywords') && serverSource.includes('collectMaxPriceCny'),
   'Serialized runs should include collection settings.',
 );
@@ -81,6 +113,15 @@ assert.ok(
 assert.ok(
   serverSource.includes('collectionSummaryHasTargetShortfall(summary)'),
   'Summary error detection should treat collection target shortfalls as failures.',
+);
+assert.ok(
+  serverSource.includes('function collectionSummaryReachedTarget(summary)')
+    && /function summaryHasErrors\(summary\)\s*\{[\s\S]*collectionSummaryReachedTarget\(summary\)[\s\S]*return false[\s\S]*Number\(summary && summary\.errorCount\) > 0/.test(serverSource),
+  'Collection summaries that reach the requested count should not fail only because earlier candidates failed.',
+);
+assert.ok(
+  /function getSummaryErrorMessage\(summary\)\s*\{[\s\S]*collectionSummaryHasTargetShortfall\(summary\)[\s\S]*collectionSummaryReachedTarget\(summary\)[\s\S]*failedItems/.test(serverSource),
+  'Collection target shortfalls should be reported before intermediate failed candidate errors.',
 );
 assert.ok(
   serverSource.includes('商品采集未达到目标'),

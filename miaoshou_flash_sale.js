@@ -2,12 +2,15 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const puppeteer = require('puppeteer-core');
+const { FLASH_SELECTORS } = require('./lib/automation_selectors');
+const { captureBrowserArtifacts } = require('./lib/automation_artifacts');
 
 const FLASH_SALE_URL = 'https://erp.91miaoshou.com/tiktok/marketing/flashSale';
 const DEFAULT_TIMEOUT = 30000;
 const LOGIN_TIMEOUT = 10 * 60 * 1000;
 const MAX_FAILURE_RETRY_ROUNDS = 5;
 const MAX_ADD_PRODUCT_SEARCH_RESULT_COUNT = 1000;
+const FLASH_SAFE_STEP_DELAY_MS = 500;
 const DEFAULT_BROWSER_WINDOW_WIDTH = 1600;
 const DEFAULT_BROWSER_WINDOW_HEIGHT = 1100;
 const FLASH_SELECTION_MODE_COUNT = 'count';
@@ -68,6 +71,23 @@ function getCaptchaDir() {
 
 function getRunId() {
   return String(process.env.MIAOSHOU_RUN_ID || 'manual').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+async function saveFlashFailureArtifacts(browser, context = {}, error = null) {
+  try {
+    const result = await captureBrowserArtifacts(browser, {
+      runId: getRunId(),
+      stage: context.stage || 'flash-failure',
+      label: context.label || '',
+      error,
+      limit: 3,
+    });
+    if (result && Array.isArray(result.artifacts) && result.artifacts.length > 0) {
+      log(`已保存失败页面诊断证据：${result.dir}`);
+    }
+  } catch (captureError) {
+    log(`保存失败页面诊断证据失败：${captureError.message || String(captureError)}`);
+  }
 }
 
 function safeFilePart(value = '') {
@@ -1214,12 +1234,12 @@ async function ensureActivityListPage(browser, listPage, options = {}) {
 
 async function readActivityRows(page) {
   await waitForBodyText(page, '管理产品', DEFAULT_TIMEOUT);
-  return page.evaluate(() => Array.from(document.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row'))
+  return page.evaluate((selectors) => Array.from(document.querySelectorAll(selectors.activityRows))
     .map((element, index) => ({
       index,
       text: (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim(),
     }))
-    .filter((row) => row.text && row.text.includes('管理产品')));
+    .filter((row) => row.text && row.text.includes('管理产品')), FLASH_SELECTORS);
 }
 
 function getActivityCandidates(rows, processedActivityKeys) {
@@ -1248,8 +1268,8 @@ function getUniqueActivityRows(rows, seenActivityKeys) {
 }
 
 async function resetActivityListScroll(page) {
-  await page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row'))
+  await page.evaluate((selectors) => {
+    const rows = Array.from(document.querySelectorAll(selectors.activityRows))
       .filter((element) => (element.innerText || element.textContent || '').includes('管理产品'));
     const isScrollable = (element) => element
       && element.scrollHeight > element.clientHeight + 20
@@ -1273,13 +1293,13 @@ async function resetActivityListScroll(page) {
     scroller.scrollTop = 0;
     scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
     window.dispatchEvent(new Event('scroll'));
-  });
+  }, FLASH_SELECTORS);
   await sleep(1200);
 }
 
 async function scrollActivityListToBottom(page) {
-  const state = await page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row'))
+  const state = await page.evaluate((selectors) => {
+    const rows = Array.from(document.querySelectorAll(selectors.activityRows))
       .filter((element) => (element.innerText || element.textContent || '').includes('管理产品'));
     const isScrollable = (element) => element
       && element.scrollHeight > element.clientHeight + 20
@@ -1315,7 +1335,7 @@ async function scrollActivityListToBottom(page) {
       moved: Math.abs(scroller.scrollTop - before) > 5,
       atBottom: scroller.scrollTop >= maxScrollTop - 5,
     };
-  });
+  }, FLASH_SELECTORS);
   await sleep(1500);
   return state;
 }
@@ -1739,7 +1759,7 @@ async function leaveActivityDetailPage(browser, listPage, detailPage) {
 }
 
 async function getVisibleDialogText(page, title) {
-  return page.evaluate((title) => {
+  return page.evaluate(({ title, selectors }) => {
     const isVisible = (element) => {
       if (!element || !element.getClientRects().length) return false;
       let current = element;
@@ -1752,17 +1772,17 @@ async function getVisibleDialogText(page, title) {
       }
       return true;
     };
-    const dialogs = Array.from(document.querySelectorAll('[role=dialog], .jx-dialog, .el-dialog'));
+    const dialogs = Array.from(document.querySelectorAll(selectors.dialogs));
     const dialog = dialogs.reverse().find((item) => {
       const text = item.innerText || item.textContent || '';
       return isVisible(item) && text.includes(title);
     });
     return dialog ? dialog.innerText || dialog.textContent || '' : '';
-  }, title);
+  }, { title, selectors: FLASH_SELECTORS });
 }
 
 async function getDialogProductState(page, title) {
-  return page.evaluate((title) => {
+  return page.evaluate(({ title, selectors }) => {
     const isVisible = (element) => {
       if (!element || !element.getClientRects().length) return false;
       let current = element;
@@ -1775,12 +1795,12 @@ async function getDialogProductState(page, title) {
       }
       return true;
     };
-    const dialogs = Array.from(document.querySelectorAll('[role=dialog], .jx-dialog, .el-dialog'));
+    const dialogs = Array.from(document.querySelectorAll(selectors.dialogs));
     const dialog = dialogs.reverse().find((item) => isVisible(item) && (item.innerText || item.textContent || '').includes(title));
     if (!dialog) {
       return { text: '', rows: [] };
     }
-    const rows = Array.from(dialog.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row, tr'))
+    const rows = Array.from(dialog.querySelectorAll(selectors.productRows))
       .filter(isVisible)
       .map((element, index) => ({
         index,
@@ -1791,11 +1811,11 @@ async function getDialogProductState(page, title) {
       text: dialog.innerText || dialog.textContent || '',
       rows,
     };
-  }, title);
+  }, { title, selectors: FLASH_SELECTORS });
 }
 
 async function getDialogSelectionState(page, title) {
-  return page.evaluate((title) => {
+  return page.evaluate(({ title, selectors }) => {
     const isVisible = (element) => {
       if (!element || !element.getClientRects().length) return false;
       let current = element;
@@ -1820,22 +1840,22 @@ async function getDialogSelectionState(page, title) {
         || /\bselected\b/.test(className);
     };
 
-    const dialogs = Array.from(document.querySelectorAll('[role=dialog], .jx-dialog, .el-dialog'));
+    const dialogs = Array.from(document.querySelectorAll(selectors.dialogs));
     const dialog = dialogs.reverse().find((item) => isVisible(item) && (item.innerText || item.textContent || '').includes(title));
     if (!dialog) {
       return { text: '', visibleRows: 0, selectedRows: 0, checkedControls: 0 };
     }
 
     const text = normalize(dialog.innerText || dialog.textContent || '');
-    const rows = Array.from(dialog.querySelectorAll('.pro-virtual-table__row, .pro-virtual-scroll__row, tr'))
+    const rows = Array.from(dialog.querySelectorAll(selectors.productRows))
       .filter(isVisible)
       .filter((row) => /(?:产品|商品)ID[:：]/.test(row.innerText || row.textContent || ''));
     const selectedRows = rows.filter((row) => {
       if (hasCheckedMark(row)) return true;
-      return Array.from(row.querySelectorAll('input[type="checkbox"], [role="checkbox"], *[class*="checkbox"]'))
+      return Array.from(row.querySelectorAll(selectors.checkboxControls))
         .some((element) => isVisible(element) && hasCheckedMark(element));
     }).length;
-    const checkedControls = Array.from(dialog.querySelectorAll('input[type="checkbox"]:checked, [aria-checked="true"], .is-checked'))
+    const checkedControls = Array.from(dialog.querySelectorAll(selectors.checkedControls))
       .filter((element) => isVisible(element))
       .length;
 
@@ -1845,7 +1865,7 @@ async function getDialogSelectionState(page, title) {
       selectedRows,
       checkedControls,
     };
-  }, title);
+  }, { title, selectors: FLASH_SELECTORS });
 }
 
 async function waitForDialogProductsLoaded(page, title, timeout = 60000) {
@@ -1931,7 +1951,7 @@ async function ensureAddProductExclusionFilters(page, title = '添加产品') {
   for (const labelText of ADD_PRODUCT_EXCLUSION_FILTER_LABELS) {
     let state = { found: false, checked: false, clicked: false };
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      state = await page.evaluate(({ title, labelText }) => {
+      state = await page.evaluate(({ title, labelText, selectors }) => {
         const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
         const classText = (element) => {
           if (!element) return '';
@@ -1950,13 +1970,13 @@ async function ensureAddProductExclusionFilters(page, title = '添加产品') {
           }
           return true;
         };
-        const dialogs = Array.from(document.querySelectorAll('[role=dialog], .jx-dialog, .el-dialog'));
+        const dialogs = Array.from(document.querySelectorAll(selectors.dialogs));
         const dialog = dialogs.reverse().find((item) => isVisible(item) && normalize(item.innerText || item.textContent || '').includes(title));
         if (!dialog) {
           return { found: false, checked: false, clicked: false };
         }
 
-        const labelCandidates = Array.from(dialog.querySelectorAll('label, span, div'))
+        const labelCandidates = Array.from(dialog.querySelectorAll(selectors.labelTextNodes))
           .filter(isVisible)
           .filter((element) => {
             const text = normalize(element.innerText || element.textContent || '');
@@ -1973,7 +1993,7 @@ async function ensureAddProductExclusionFilters(page, title = '添加产品') {
           || label;
         const stateElements = [
           wrapper,
-          ...Array.from(wrapper.querySelectorAll('input[type="checkbox"], [role="checkbox"], .el-checkbox__input, .ant-checkbox, .jx-checkbox, [class*="checkbox"]')),
+          ...Array.from(wrapper.querySelectorAll(selectors.checkboxControls)),
         ].filter(Boolean);
         const checked = stateElements.some((element) => {
           if (element.matches && element.matches('input[type="checkbox"]')) {
@@ -1994,7 +2014,7 @@ async function ensureAddProductExclusionFilters(page, title = '添加产品') {
         wrapper.scrollIntoView({ block: 'center', inline: 'center' });
         wrapper.click();
         return { found: true, checked: false, clicked: true };
-      }, { title, labelText });
+      }, { title, labelText, selectors: FLASH_SELECTORS });
 
       if (!state.found || state.checked) {
         break;
@@ -2052,11 +2072,15 @@ async function clickDialogButton(page, title, buttonText) {
 
 async function waitForDialogGone(page, title, timeout = DEFAULT_TIMEOUT) {
   const startedAt = Date.now();
+  let lastText = '';
   while (Date.now() - startedAt < timeout) {
     const text = await getVisibleDialogText(page, title);
     if (!text) return;
+    lastText = text;
     await sleep(500);
   }
+  const clipped = String(lastText || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  throw new Error(`${title} 弹窗没有关闭，已停止避免在弹窗遮挡时继续操作。${clipped ? `弹窗内容：${clipped}` : ''}`);
 }
 
 async function getActivityProductListState(page) {
@@ -2128,7 +2152,7 @@ async function handleAddProducts(page, activity) {
 
   if (productState.rows.length === 0) {
     await clickDialogButton(page, '添加产品', '取消');
-    await waitForDialogGone(page, '添加产品', 10000).catch(() => {});
+    await waitForDialogGone(page, '添加产品', 10000);
     log('添加产品弹窗没有可添加商品，本活动跳过添加产品。');
     return { added: 0, popupProductCount };
   }
@@ -2172,7 +2196,7 @@ async function handleAddProducts(page, activity) {
 
   if (filteredState.rows.length === 0 || hasEmptyTableText(dialogText) || popupProductCount === 0) {
     await clickDialogButton(page, '添加产品', '取消');
-    await waitForDialogGone(page, '添加产品', 10000).catch(() => {});
+    await waitForDialogGone(page, '添加产品', 10000);
     log('添加产品筛选后没有可添加商品，本活动跳过添加产品。');
     return { added: 0, popupProductCount };
   }
@@ -2208,33 +2232,168 @@ async function handleAddProducts(page, activity) {
   return { added, popupProductCount };
 }
 
+async function isProductPageSize1000Selected(page) {
+  return page.evaluate(() => {
+    const normalize = (value) => String(value || '').replace(/\s+/g, '').trim();
+    const isVisible = (element) => {
+      if (!element || !element.getClientRects().length) return false;
+      let current = element;
+      while (current && current !== document.body) {
+        const style = window.getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+    return Array.from(document.querySelectorAll('span, div, input'))
+      .filter((element) => !element.closest('[role=dialog], .jx-dialog, .el-dialog'))
+      .filter(isVisible)
+      .some((element) => /^1000条\/页$/.test(normalize(element.innerText || element.textContent || element.value || '')));
+  });
+}
+
+async function waitForPageSize1000Selected(page, timeout = 20000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    if (await isProductPageSize1000Selected(page)) {
+      return true;
+    }
+    await sleep(500);
+  }
+  throw new Error('等待商品列表分页切换到 1000 条/页超时，已停止避免全选旧列表。');
+}
+
 async function selectPageSize1000(page) {
-  const text = await bodyText(page);
-  if (text.includes('1000条/页')) {
+  if (await isProductPageSize1000Selected(page)) {
+    log('商品列表分页已是 1000 条/页，等待列表稳定。');
+    await waitForFilteredProductListStable(page, 60000);
     return true;
   }
 
-  const clicked = await page.evaluate(() => {
-    const elements = Array.from(document.querySelectorAll('span, div, input'));
-    const element = elements.find((item) => /\d+条\/页/.test((item.innerText || item.textContent || item.value || '').trim()));
-    if (!element) return false;
-    element.scrollIntoView({ block: 'center', inline: 'center' });
-    element.click();
-    return true;
-  });
-  if (!clicked) return false;
-  await sleep(800);
+  const getProductPageSizeTriggerPoint = () => page.evaluate(() => {
+    const normalize = (value) => String(value || '').replace(/\s+/g, '').trim();
+    const isVisible = (element) => {
+      if (!element || !element.getClientRects().length) return false;
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      let current = element;
+      while (current && current !== document.body) {
+        const style = window.getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+    const entries = Array.from(document.querySelectorAll('button, span, div, input'))
+      .filter((element) => !element.closest('[role=dialog], .jx-dialog, .el-dialog'))
+      .filter((element) => !element.closest('[class*=dropdown], [class*=Dropdown], [class*=popper], [class*=Popper], [class*=option], [class*=Option]'))
+      .filter((element) => !element.closest('.jx-select-dropdown, .el-select-dropdown, .ant-select-dropdown, .semi-select-option-list, .arco-select-dropdown'))
+      .filter(isVisible)
+      .map((element) => {
+        const text = normalize(element.innerText || element.textContent || element.value || '');
+        const match = text.match(/^(\d+)条\/页$/);
+        if (!match) return null;
+        const rect = element.getBoundingClientRect();
+        return {
+          element,
+          value: Number.parseInt(match[1], 10),
+          bottom: rect.bottom,
+          right: rect.right,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.bottom - a.bottom || b.right - a.right);
 
-  const optionClicked = await page.evaluate(() => {
-    const elements = Array.from(document.querySelectorAll('li, span, div'));
-    const element = elements.find((item) => (item.innerText || item.textContent || '').trim() === '1000条/页');
-    if (!element) return false;
-    element.scrollIntoView({ block: 'center', inline: 'center' });
-    element.click();
-    return true;
+    const current = entries[0];
+    if (!current) return null;
+    const trigger = current.element.closest?.('.jx-select, .jx-select__wrapper, .el-select, .el-select__wrapper, .ant-select, .semi-select, .arco-select, [class*=select], [class*=Select], [role=button], button')
+      || current.element.parentElement
+      || current.element;
+    trigger.scrollIntoView({ block: 'center', inline: 'center' });
+    const rect = trigger.getBoundingClientRect();
+    return {
+      x: Math.max(rect.left + 4, rect.right - 16),
+      y: rect.top + rect.height / 2,
+      value: current.value,
+    };
   });
-  await sleep(1500);
-  return optionClicked;
+
+  const getProductPageSizeOptionPoint = () => page.evaluate(() => {
+    const normalize = (value) => String(value || '').replace(/\s+/g, '').trim();
+    const isVisible = (element) => {
+      if (!element || !element.getClientRects().length) return false;
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      let current = element;
+      while (current && current !== document.body) {
+        const style = window.getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+    const option = Array.from(document.querySelectorAll('[role=option], li, span, div'))
+      .filter(isVisible);
+    const targetEntry = option
+      .map((element) => {
+        const text = normalize(element.innerText || element.textContent || '');
+        if (text !== '1000条/页') return null;
+        const target = element.closest?.('[role=option], li, .jx-select-dropdown__item, .el-select-dropdown__item, .ant-select-item, .semi-select-option, .arco-select-option')
+          || element;
+        const rect = target.getBoundingClientRect();
+        return { target, rect };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.rect.bottom - a.rect.bottom || b.rect.right - a.rect.right)[0];
+    if (!targetEntry) return null;
+    targetEntry.target.scrollIntoView({ block: 'center', inline: 'center' });
+    const rect = targetEntry.target.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+  });
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (await isProductPageSize1000Selected(page)) {
+      break;
+    }
+
+    const triggerPoint = await getProductPageSizeTriggerPoint();
+    if (!triggerPoint) {
+      await sleep(800);
+      continue;
+    }
+    log(`当前添加产品列表分页为 ${triggerPoint.value} 条/页，点击分页器。`);
+    await page.mouse.click(triggerPoint.x, triggerPoint.y);
+    await sleep(800);
+
+    let optionPoint = null;
+    for (let optionAttempt = 0; optionAttempt < 5; optionAttempt += 1) {
+      optionPoint = await getProductPageSizeOptionPoint();
+      if (optionPoint) break;
+      await page.mouse.wheel({ deltaY: 160 });
+      await sleep(300);
+    }
+    if (!optionPoint) {
+      await sleep(800);
+      continue;
+    }
+
+    await page.mouse.click(optionPoint.x, optionPoint.y);
+    await sleep(1500);
+  }
+
+  await waitForPageSize1000Selected(page, 20000);
+  log('已确认商品列表分页切换为 1000 条/页，等待列表刷新完成。');
+  await waitForFilteredProductListStable(page, 60000);
+  return true;
 }
 
 async function ensureUnpricedFilter(page) {
@@ -2255,8 +2414,8 @@ async function ensureUnpricedFilter(page) {
   log('已勾选“仅展示未设置秒杀价产品”，等待筛选结果刷新。');
   await waitForUnpricedFilterChecked(page, 15000).catch(() => {});
   await waitForFilteredProductListStable(page, 60000);
-  log('筛选结果已刷新，停留 1 秒后再全选商品。');
-  await sleep(1000);
+  log('筛选结果已刷新，继续设置商品列表分页。');
+  await sleep(FLASH_SAFE_STEP_DELAY_MS);
 }
 
 async function waitForUnpricedFilterChecked(page, timeout = 15000) {
@@ -2386,6 +2545,9 @@ async function waitForProductRowsOrEmpty(page, timeout = 60000) {
 }
 
 async function selectAllFilteredProducts(page) {
+  await waitForUnpricedFilterChecked(page, 5000);
+  await waitForFilteredProductListStable(page, 20000);
+
   const clicked = await page.evaluate(() => {
     const headers = Array.from(document.querySelectorAll('th, .pro-virtual-table__header, .pro-table__header, div'));
     const productHeader = headers.find((item) => (item.innerText || item.textContent || '').includes('产品信息'));
@@ -3378,15 +3540,22 @@ async function processActivity(browser, listPage, activity, runState) {
     const addResult = await handleAddProducts(detailPage, activity);
     totalAddedProducts += addResult.added;
     log(attempt === 1
-      ? '添加产品流程完成，停留 1 秒后再勾选“仅展示未设置秒杀价产品”。'
-      : '重试添加产品流程完成，停留 1 秒后再勾选“仅展示未设置秒杀价产品”。');
-    await sleep(1000);
+      ? '添加产品流程完成，停留 0.5 秒后先勾选“仅展示未设置秒杀价产品”，再切换 1000 条/页。'
+      : '重试添加产品流程完成，停留 0.5 秒后先勾选“仅展示未设置秒杀价产品”，再切换 1000 条/页。');
+    await sleep(FLASH_SAFE_STEP_DELAY_MS);
 
-    await selectPageSize1000(detailPage).catch((error) => {
-      log(`设置 1000 条/页失败，继续尝试后续步骤：${error.message}`);
-    });
     await ensureUnpricedFilter(detailPage);
-    const { text: textAfterFilter, rows: productRows } = await waitForProductRowsOrEmpty(detailPage, 60000);
+    let filteredProductState = await waitForProductRowsOrEmpty(detailPage, 60000);
+    let textAfterFilter = filteredProductState.text;
+    let productRows = filteredProductState.rows;
+    if (textAfterFilter.includes('暂无数据') || productRows.length === 0) {
+      log('筛选后没有未设置秒杀价商品，跳过 1000 条/页切换。');
+    } else {
+      await selectPageSize1000(detailPage);
+      filteredProductState = await waitForProductRowsOrEmpty(detailPage, 60000);
+      textAfterFilter = filteredProductState.text;
+      productRows = filteredProductState.rows;
+    }
     lastUnpricedProducts = productRows.length;
     if (textAfterFilter.includes('暂无数据') || productRows.length === 0) {
       if (submitted || attempt > 1) {
@@ -3435,35 +3604,44 @@ async function processActivity(browser, listPage, activity, runState) {
 
 async function run() {
   const args = parseArgs();
-  const browser = await puppeteer.launch({
-    executablePath: getChromeExecutablePath(),
-    headless: args.headless,
-    userDataDir: getProfileDir(),
-    defaultViewport: null,
-    args: [
-      `--window-size=${DEFAULT_BROWSER_WINDOW_WIDTH},${DEFAULT_BROWSER_WINDOW_HEIGHT}`,
-      '--start-maximized',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-features=Translate',
-    ],
-  });
-
+  let browser = null;
   const results = [];
   const processedActivityKeys = new Set();
   const runState = {
     completed: 0,
     total: args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? 0 : args.count,
   };
+  const failureContext = {
+    stage: 'launch',
+    label: '启动浏览器',
+  };
 
   try {
+    browser = await puppeteer.launch({
+      executablePath: getChromeExecutablePath(),
+      headless: args.headless,
+      userDataDir: getProfileDir(),
+      defaultViewport: null,
+      args: [
+        `--window-size=${DEFAULT_BROWSER_WINDOW_WIDTH},${DEFAULT_BROWSER_WINDOW_HEIGHT}`,
+        '--start-maximized',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-features=Translate',
+      ],
+    });
+
     const pages = await browser.pages();
     let listPage = pages[0] || await browser.newPage();
     listPage.setDefaultTimeout(DEFAULT_TIMEOUT);
     listPage.setDefaultNavigationTimeout(DEFAULT_TIMEOUT);
     await ensureLargeBrowserViewport(listPage);
 
+    failureContext.stage = 'login';
+    failureContext.label = '登录妙手';
     await ensureLoggedIn(listPage);
+    failureContext.stage = 'activity-list';
+    failureContext.label = '秒杀活动列表';
     await listPage.goto(FLASH_SALE_URL, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT });
     await waitForFlashSaleListReady(listPage, DEFAULT_TIMEOUT);
     const runningState = await clickRunningTab(listPage);
@@ -3487,6 +3665,8 @@ async function run() {
     });
 
     for (const target of activityQueue) {
+      failureContext.stage = 'process-activity';
+      failureContext.label = target.activity.title || target.activity.id || '秒杀活动';
       listPage = await ensureActivityListPage(browser, listPage, { quiet: true, resetScroll: true });
       log('已回到最开始的秒杀活动列表页，准备寻找下一个活动。');
 
@@ -3518,8 +3698,13 @@ async function run() {
       mode: 'flash-sale',
       results,
     }));
+  } catch (error) {
+    await saveFlashFailureArtifacts(browser, failureContext, error);
+    throw error;
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
 }
 

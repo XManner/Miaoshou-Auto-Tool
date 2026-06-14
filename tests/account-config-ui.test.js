@@ -4,8 +4,9 @@ const path = require('path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'web_server.js'), 'utf8');
+const configSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'project_config.js'), 'utf8');
 const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
-const combinedSource = `${appSource}\n${serverSource}`;
+const combinedSource = `${appSource}\n${serverSource}\n${configSource}`;
 const oldLookupKey = `ALI1688_${['COO', 'KIE'].join('')}`;
 const oldLookupLabel = `168${'8'} ${['Cook', 'ie'].join('')}`;
 

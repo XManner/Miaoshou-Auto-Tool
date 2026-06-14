@@ -6,6 +6,8 @@ const auto = require('../miaoshou_auto.js');
 const webSource = fs.readFileSync(path.join(__dirname, '..', 'web_server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const autoSource = fs.readFileSync(path.join(__dirname, '..', 'miaoshou_auto.js'), 'utf8');
+const cliSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'cli_args.js'), 'utf8');
+const lookupSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'source_1688_lookup.js'), 'utf8');
 const obsoleteCookieEnvRead = ['process.env.ALI1688', 'COOKIE'].join('_');
 const obsoleteCookieHeader = ['Cookie', ': cookie'].join('');
 
@@ -118,7 +120,7 @@ assert.ok(
   'Web server should pass the source price extra amount to miaoshou_auto.js.',
 );
 assert.ok(
-  autoSource.includes("arg === '--source-price-extra'"),
+  cliSource.includes("arg === '--source-price-extra'"),
   'CLI should accept --source-price-extra.',
 );
 assert.ok(
@@ -126,9 +128,11 @@ assert.ok(
   'Automation should carry sourcePriceExtraCny through the edit workflow.',
 );
 assert.ok(
-  autoSource.includes('headers: build1688RequestHeaders()')
+  lookupSource.includes('headers: build1688RequestHeaders()')
     && !autoSource.includes(obsoleteCookieEnvRead)
-    && !autoSource.includes(obsoleteCookieHeader),
+    && !lookupSource.includes(obsoleteCookieEnvRead)
+    && !autoSource.includes(obsoleteCookieHeader)
+    && !lookupSource.includes(obsoleteCookieHeader),
   'Edit workflow 1688 price/weight lookup should not rely on the obsolete 1688 cookie setting.',
 );
 

@@ -72,9 +72,9 @@ assert.ok(
   'The home page should not show the task entry grid.',
 );
 assert.ok(
-    appSource.includes('功能概览')
+  appSource.includes('功能概览')
       && appSource.includes('选品到采集箱')
-    && appSource.includes('采集 1688 商品')
+      && appSource.includes('采集 1688 / Amazon 商品')
       && appSource.includes('优化并发布商品信息')
       && appSource.includes('自动设置限时秒杀'),
   'The home page should explain the main automation functions.',

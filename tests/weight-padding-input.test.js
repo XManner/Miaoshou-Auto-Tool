@@ -6,6 +6,7 @@ const auto = require('../miaoshou_auto.js');
 const webSource = fs.readFileSync(path.join(__dirname, '..', 'web_server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const autoSource = fs.readFileSync(path.join(__dirname, '..', 'miaoshou_auto.js'), 'utf8');
+const cliSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'cli_args.js'), 'utf8');
 
 assert.strictEqual(
   typeof auto.addSkuWeightPaddingKg,
@@ -34,7 +35,7 @@ assert.ok(
   'Web server should pass the custom weight padding to miaoshou_auto.js.',
 );
 assert.ok(
-  autoSource.includes("arg === '--weight-padding-grams'"),
+  cliSource.includes("arg === '--weight-padding-grams'"),
   'CLI should accept --weight-padding-grams.',
 );
 assert.ok(

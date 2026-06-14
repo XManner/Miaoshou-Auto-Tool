@@ -6,6 +6,7 @@ const auto = require('../miaoshou_auto.js');
 const webSource = fs.readFileSync(path.join(__dirname, '..', 'web_server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const autoSource = fs.readFileSync(path.join(__dirname, '..', 'miaoshou_auto.js'), 'utf8');
+const cliSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'cli_args.js'), 'utf8');
 
 assert.strictEqual(
   typeof auto.normalizeItemRangeSelection,
@@ -106,8 +107,8 @@ assert.ok(
   'Range mode should appear before all-products mode in the product page.',
 );
 assert.ok(
-  appSource.includes("itemSelectionMode: 'range'"),
-  'Range mode should be selected by default.',
+  appSource.includes("itemSelectionMode: 'all'"),
+  'All-products mode should be selected by default.',
 );
 assert.ok(
   appSource.includes('v-model:value="productForm.count"'),
@@ -138,15 +139,15 @@ assert.ok(
   'Web server should pass the item end index to miaoshou_auto.js.',
 );
 assert.ok(
-  autoSource.includes("arg === '--item-selection-mode'"),
+  cliSource.includes("arg === '--item-selection-mode'"),
   'CLI should accept --item-selection-mode.',
 );
 assert.ok(
-  autoSource.includes("arg === '--item-start-index'"),
+  cliSource.includes("arg === '--item-start-index'"),
   'CLI should accept --item-start-index.',
 );
 assert.ok(
-  autoSource.includes("arg === '--item-end-index'"),
+  cliSource.includes("arg === '--item-end-index'"),
   'CLI should accept --item-end-index.',
 );
 
