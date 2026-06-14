@@ -4,6 +4,7 @@ const path = require('path');
 
 const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+const productPanelSource = appSource.match(/<a-card v-if="currentPage === 'products'"[\s\S]*?<a-card v-if="currentPage === 'flash'"/)?.[0] || '';
 
 assert.ok(
   styles.includes('.app-shell'),
@@ -62,6 +63,69 @@ assert.ok(
 assert.ok(
   styles.includes('.form-section-summary') && styles.includes('.form-section-actions'),
   'The horizontal task form should place summaries and actions in managed grid sections.',
+);
+assert.ok(
+  /\.flash-panel \.form-section-summary\s*\{[^}]*grid-column:\s*1 \/ -1;/.test(styles),
+  'The flash task summary should occupy its own full-width row below the controls.',
+);
+assert.ok(
+  !/<a-input-number[^>]*size="large"/.test(productPanelSource)
+    && (productPanelSource.match(/<a-input-number[^>]*size="middle"/g) || []).length >= 5,
+  'Product edit numeric inputs should use medium size controls.',
+);
+assert.ok(
+  /label="处理模式"[\s\S]*label="商品选择"[\s\S]*label="开始序号"[\s\S]*label="商品数量"/.test(productPanelSource),
+  'Product edit controls should start with processing mode, then product selection and range inputs.',
+);
+assert.ok(
+  /\.product-panel \.form-section-mode\s*\{[^}]*grid-column:\s*1 \/ span 2;[^}]*grid-row:\s*1;/.test(styles)
+    && /\.product-panel \.form-section-pricing\s*\{[^}]*grid-column:\s*3 \/ span 4;[^}]*grid-row:\s*1;/.test(styles)
+    && /\.product-panel \.form-section-offer\s*\{[^}]*grid-column:\s*7 \/ span 2;[^}]*grid-row:\s*1;/.test(styles),
+  'Product edit first row should start with processing mode and keep pricing plus offer controls together.',
+);
+assert.ok(
+  /\.product-panel \.form-section-choice\s*\{[^}]*grid-column:\s*1 \/ span 2;[^}]*grid-row:\s*2;/.test(styles)
+    && /\.product-panel \.form-section-range\s*\{[^}]*grid-column:\s*3 \/ span 4;[^}]*grid-row:\s*2;/.test(styles),
+  'Product edit product selection and shorter range controls should occupy the second row by themselves.',
+);
+assert.ok(
+  !/<a-row[^>]*v-if="productForm\.itemSelectionMode === 'range'"[^>]*class="form-section form-section-range"/.test(productPanelSource)
+    && /class="form-section form-section-range"[\s\S]*:class="\{ 'range-placeholder': productForm\.itemSelectionMode !== 'range' \}"/.test(productPanelSource)
+    && /:aria-hidden="productForm\.itemSelectionMode !== 'range'"/.test(productPanelSource),
+  'Product edit range controls should keep their layout slot when switching to all products.',
+);
+assert.ok(
+  /\.product-panel \.form-section-range\.range-placeholder\s*\{[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none;/.test(styles),
+  'Product edit hidden range controls should be invisible without collapsing the second-row slot.',
+);
+assert.ok(
+  /\.product-panel \.form-section-switches\s*\{[^}]*grid-column:\s*1 \/ span 4;[^}]*grid-row:\s*3;/.test(styles)
+    && /\.product-panel \.flash-selection-row\s*\{[^}]*grid-column:\s*5 \/ span 4;[^}]*grid-row:\s*3;/.test(styles),
+  'Product edit follow-up flash controls should sit to the right of the publish and follow-up switches.',
+);
+assert.ok(
+  (productPanelSource.match(/class="medium-radio-group equal-radio-group"/g) || []).length >= 3
+    && /\.product-panel \.equal-radio-group\s*\{[^}]*width:\s*168px;[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/.test(styles)
+    && /\.product-panel \.equal-radio-group \.ant-radio-button-wrapper\s*\{[^}]*min-width:\s*0;/.test(styles),
+  'Product edit primary radio button groups should share the same fixed width.',
+);
+assert.ok(
+  /\.product-panel \.form-section-mode,\s*\.product-panel \.form-section-choice,\s*\.product-panel \.form-section-range,\s*\.product-panel \.form-section-pricing,\s*\.product-panel \.form-section-offer,\s*\.product-panel \.form-section-switches,\s*\.product-panel \.flash-selection-row\s*\{[^}]*grid-row:\s*auto;/.test(styles),
+  'Product edit explicit desktop rows should be reset on small screens.',
+);
+assert.ok(
+  /\.product-panel \.medium-radio-group\s*\{[^}]*width:\s*max-content;[^}]*grid-template-columns:\s*repeat\(2, max-content\);/.test(styles)
+    && /\.product-panel \.medium-radio-group \.ant-radio-button-wrapper\s*\{[^}]*width:\s*auto;[^}]*min-width:\s*76px;[^}]*padding:\s*0 12px;/.test(styles),
+  'Product edit radio button groups should use compact content width instead of stretching.',
+);
+assert.ok(
+  /\.flash-selection-row\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*max-content 112px;[^}]*gap:\s*12px;/.test(styles),
+  'Flash quantity controls should sit in one compact row.',
+);
+assert.ok(
+  /\.flash-selection-row \.medium-radio-group\s*\{[^}]*width:\s*max-content;[^}]*grid-template-columns:\s*repeat\(2, max-content\);/.test(styles)
+    && /\.flash-selection-row \.medium-radio-group \.ant-radio-button-wrapper\s*\{[^}]*width:\s*auto;[^}]*min-width:\s*88px;/.test(styles),
+  'Flash quantity radio buttons should use compact content width instead of stretching.',
 );
 assert.ok(
   styles.includes('.collect-auto-filter-panel')

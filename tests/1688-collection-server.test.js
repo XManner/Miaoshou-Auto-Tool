@@ -115,6 +115,15 @@ assert.ok(
   'Summary error detection should treat collection target shortfalls as failures.',
 );
 assert.ok(
+  serverSource.includes('function collectionSummaryReachedTarget(summary)')
+    && /function summaryHasErrors\(summary\)\s*\{[\s\S]*collectionSummaryReachedTarget\(summary\)[\s\S]*return false[\s\S]*Number\(summary && summary\.errorCount\) > 0/.test(serverSource),
+  'Collection summaries that reach the requested count should not fail only because earlier candidates failed.',
+);
+assert.ok(
+  /function getSummaryErrorMessage\(summary\)\s*\{[\s\S]*collectionSummaryHasTargetShortfall\(summary\)[\s\S]*collectionSummaryReachedTarget\(summary\)[\s\S]*failedItems/.test(serverSource),
+  'Collection target shortfalls should be reported before intermediate failed candidate errors.',
+);
+assert.ok(
   serverSource.includes('商品采集未达到目标'),
   'Collection target shortfalls should produce a clear error message instead of a completion message.',
 );

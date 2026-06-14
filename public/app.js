@@ -124,6 +124,19 @@
     return 0;
   }
 
+  function metricCountOrNull(...values) {
+    for (const value of values) {
+      if (value === null || value === undefined) {
+        continue;
+      }
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        return normalizeMetricCount(numeric);
+      }
+    }
+    return null;
+  }
+
   function runDurationMs(run) {
     if (!run) {
       return 0;
@@ -189,6 +202,53 @@
     return 'default';
   }
 
+  function buildHistoryResultMetrics(run, page) {
+    const summary = pageSummary(run, page);
+    const progress = run && run.progress ? run.progress : {};
+    const failedItemsCount = summary && Array.isArray(summary.failedItems)
+      ? summary.failedItems.length
+      : null;
+    const totalCount = metricCountOrNull(summary && summary.totalCount, progress.totalCount, progress.total);
+    const failureCount = metricCountOrNull(
+      summary && summary.failureCount,
+      summary && summary.errorCount,
+      failedItemsCount,
+      progress.failureCount,
+      progress.errorCount,
+    );
+    const successCount = metricCountOrNull(summary && summary.successCount, progress.successCount, progress.completed);
+    if (totalCount === null && successCount === null && failureCount === null) {
+      return null;
+    }
+    const resolvedFailure = failureCount === null ? 0 : failureCount;
+    const resolvedSuccess = successCount === null
+      ? (totalCount === null ? 0 : normalizeMetricCount(totalCount - resolvedFailure))
+      : successCount;
+    const resolvedTotal = totalCount === null ? resolvedSuccess + resolvedFailure : totalCount;
+    if (!summary && resolvedTotal === 0 && resolvedSuccess === 0 && resolvedFailure === 0) {
+      return null;
+    }
+    return {
+      totalCount: resolvedTotal,
+      successCount: resolvedSuccess,
+      failureCount: resolvedFailure,
+    };
+  }
+
+  function buildHistoryResultText(run, page) {
+    if (!run || run.status === 'running') {
+      return '';
+    }
+    const metrics = buildHistoryResultMetrics(run, page);
+    if (!metrics) {
+      return '';
+    }
+    const actionText = page === 'flash'
+      ? `处理 ${metrics.totalCount} 个秒杀活动`
+      : `编辑 ${metrics.totalCount} 个商品`;
+    return `（${actionText}，成功 ${metrics.successCount} 个，失败 ${metrics.failureCount} 个）`;
+  }
+
   function buildTaskText(run) {
     if (!run) {
       return '等待选择任务。';
@@ -199,14 +259,16 @@
     }
     const parts = [];
     if (tasks.edit !== false) {
+      const editResultText = run.itemSelectionMode === 'all' ? buildHistoryResultText(run, 'products') : '';
       const selection = run.itemSelectionMode === 'all'
         ? '全部商品'
         : `${run.count || 0} 个商品`;
-      parts.push(`编辑优化 ${selection}${run.publish ? '并发布' : '，不发布'}`);
+      parts.push(`编辑优化 ${selection}${editResultText}${run.publish ? '并发布' : '，不发布'}`);
     }
     if (tasks.flash) {
+      const flashResultText = run.flashSelectionMode === 'all' ? buildHistoryResultText(run, 'flash') : '';
       parts.push(run.flashSelectionMode === 'all'
-        ? '处理全部秒杀活动'
+        ? `处理全部秒杀活动${flashResultText}`
         : `处理 ${run.flashCount || 0} 个秒杀活动`);
     }
     return parts.length > 0 ? parts.join('，') : '等待选择任务。';
@@ -372,15 +434,16 @@
       const loading = ref(false);
 
       const productForm = reactive({
-        itemSelectionMode: 'range',
+        itemSelectionMode: 'all',
         itemStartIndex: 1,
         count: 1,
         publish: false,
-        processingMode: 'fast',
+        processingMode: 'precise',
         sourcePriceExtraCny: 0,
         weightPaddingGrams: 30,
+        buyOneTakeOne: false,
         runFlashAfterEdit: false,
-        productFlashSelectionMode: 'count',
+        productFlashSelectionMode: 'all',
         flashCount: 1,
       });
 
@@ -404,7 +467,7 @@
       });
 
       const flashForm = reactive({
-        flashSelectionMode: 'count',
+        flashSelectionMode: 'all',
         flashCount: 1,
       });
 
@@ -459,6 +522,13 @@
       const visibleLogs = computed(() => pageLogs(displayRun.value, currentPage.value));
       const hasLogs = computed(() => visibleLogs.value.length > 0);
       const hasHistory = computed(() => history.value.length > 0);
+      const visibleHistory = computed(() => {
+        if (currentPage.value === 'home') {
+          return history.value;
+        }
+        return history.value.filter((run) => historyPageForRun(run) === currentPage.value);
+      });
+      const hasVisibleHistory = computed(() => visibleHistory.value.length > 0);
       const collectHistoryItems = computed(() => collectHistoryItemsFromRuns(history.value));
       const collectLinkList = computed(() => String(collectForm.links || '')
         .split(/[\s,，、]+/)
@@ -502,7 +572,8 @@
         const flashText = productForm.runFlashAfterEdit
           ? `，完成后继续处理 ${flashSelectionText(productForm.productFlashSelectionMode, productForm.flashCount)}`
           : '';
-        return `使用 ${account}，编辑优化 ${selection}，${publishText}${flashText}。`;
+        const offerText = productForm.buyOneTakeOne ? '，单 SKU 添加 Buy 1 Take 1' : '';
+        return `使用 ${account}，编辑优化 ${selection}，${publishText}${offerText}${flashText}。`;
       });
       const collectTaskSummary = computed(() => {
         const account = defaultAccount.value ? maskPhoneText(defaultAccount.value.label) : '默认账号';
@@ -738,6 +809,7 @@
           processingMode: productForm.processingMode,
           sourcePriceExtraCny: Number(productForm.sourcePriceExtraCny || 0),
           weightPaddingGrams: Number(productForm.weightPaddingGrams || 0),
+          buyOneTakeOne: Boolean(productForm.buyOneTakeOne),
           flashSelectionMode: productForm.productFlashSelectionMode,
           flashCount: Math.max(1, Number(productForm.flashCount || 1)),
         };
@@ -1031,6 +1103,7 @@
         formatTime,
         goPage,
         hasHistory,
+        hasVisibleHistory,
         hasLogs,
         history,
         isPageRunning,
@@ -1073,6 +1146,7 @@
         themeName,
         useLocalEnv,
         visibleLogs,
+        visibleHistory,
       };
     },
     template: `
@@ -1190,13 +1264,13 @@
                   />
                   <a-form layout="vertical" class="task-form">
                     <a-form-item label="采集来源" class="form-section form-section-choice">
-                      <a-radio-group v-model:value="collectForm.source" button-style="solid" class="large-radio-group">
+                      <a-radio-group v-model:value="collectForm.source" button-style="solid" class="medium-radio-group equal-radio-group">
                         <a-radio-button value="1688">1688</a-radio-button>
                         <a-radio-button value="amazon" :disabled="!supportsAmazonCollection">Amazon.com</a-radio-button>
                       </a-radio-group>
                     </a-form-item>
                     <a-form-item label="采集模式" class="form-section form-section-choice">
-                      <a-radio-group v-model:value="collectForm.mode" button-style="solid" class="large-radio-group">
+                      <a-radio-group v-model:value="collectForm.mode" button-style="solid" class="medium-radio-group equal-radio-group">
                         <a-radio-button value="auto">自动采集</a-radio-button>
                         <a-radio-button value="links">链接采集</a-radio-button>
                       </a-radio-group>
@@ -1290,61 +1364,60 @@
                     type="info"
                     show-icon
                     message="编辑发布商品"
-                    description="优化商品内容，可选择是否发布；快速模式使用本地规则审核图片，精细模式使用 MiMo，识别更细但 token 消耗很大。"
+                    description="优化商品内容，可选择是否发布；快速模式使用本地规则审核图片，精细模式使用 MiMo，可以稳定删除不符合要求的图片，但是会消耗token。"
                   />
                   <a-form layout="vertical" class="task-form">
+                    <a-form-item label="处理模式" class="form-section form-section-mode">
+                      <a-radio-group v-model:value="productForm.processingMode" button-style="solid" class="medium-radio-group equal-radio-group">
+                        <a-radio-button value="fast" title="图片审核只用本地规则，速度更快">快速模式</a-radio-button>
+                        <a-radio-button value="precise" title="图片审核使用 MiMo，识别更细但 token 消耗很大">精细模式</a-radio-button>
+                      </a-radio-group>
+                    </a-form-item>
                     <a-form-item label="商品选择" class="form-section form-section-choice">
-                      <a-radio-group v-model:value="productForm.itemSelectionMode" button-style="solid" class="large-radio-group">
+                      <a-radio-group v-model:value="productForm.itemSelectionMode" button-style="solid" class="medium-radio-group equal-radio-group">
                         <a-radio-button value="range">按范围</a-radio-button>
                         <a-radio-button value="all">全部商品</a-radio-button>
                       </a-radio-group>
                     </a-form-item>
-                    <a-row :gutter="16" v-if="productForm.itemSelectionMode === 'range'" class="form-section form-section-range">
+                    <a-row
+                      :gutter="16"
+                      class="form-section form-section-range"
+                      :class="{ 'range-placeholder': productForm.itemSelectionMode !== 'range' }"
+                      :aria-hidden="productForm.itemSelectionMode !== 'range'"
+                    >
                       <a-col :xs="24" :sm="12">
                         <a-form-item label="开始序号">
-                          <a-input-number v-model:value="productForm.itemStartIndex" :min="1" :max="500" size="large" class="full-width" />
+                          <a-input-number v-model:value="productForm.itemStartIndex" :min="1" :max="500" size="middle" class="full-width" />
                         </a-form-item>
                       </a-col>
                       <a-col :xs="24" :sm="12">
                         <a-form-item label="商品数量">
-                          <a-input-number v-model:value="productForm.count" :min="1" :max="500" size="large" class="full-width" />
+                          <a-input-number v-model:value="productForm.count" :min="1" :max="500" size="middle" class="full-width" />
                         </a-form-item>
                       </a-col>
                     </a-row>
-                    <a-form-item label="处理模式" class="form-section form-section-mode">
-                      <div class="mode-button-group">
-                        <a-tooltip title="图片审核只用本地规则，速度更快">
-                          <a-button
-                            size="large"
-                            :type="productForm.processingMode === 'fast' ? 'primary' : 'default'"
-                            @click="productForm.processingMode = 'fast'"
-                          >快速模式</a-button>
-                        </a-tooltip>
-                        <a-tooltip title="图片审核使用 MiMo，识别更细但 token 消耗很大">
-                          <a-button
-                            size="large"
-                            :type="productForm.processingMode === 'precise' ? 'primary' : 'default'"
-                            @click="productForm.processingMode = 'precise'"
-                          >精细模式</a-button>
-                        </a-tooltip>
-                      </div>
-                    </a-form-item>
                     <a-row :gutter="16" class="form-section form-section-pricing">
                       <a-col :xs="24" :sm="12">
                         <a-form-item label="来源价格加价">
-                          <a-input-number v-model:value="productForm.sourcePriceExtraCny" :min="0" :max="1000" :precision="2" addon-after="元" size="large" class="full-width" />
+                          <a-input-number v-model:value="productForm.sourcePriceExtraCny" :min="0" :max="1000" :precision="2" addon-after="元" size="middle" class="full-width" />
                         </a-form-item>
                       </a-col>
                       <a-col :xs="24" :sm="12">
                         <a-form-item label="SKU 重量额外加重">
-                          <a-input-number v-model:value="productForm.weightPaddingGrams" :min="0" :max="5000" :precision="1" addon-after="g" size="large" class="full-width" />
+                          <a-input-number v-model:value="productForm.weightPaddingGrams" :min="0" :max="5000" :precision="1" addon-after="g" size="middle" class="full-width" />
                         </a-form-item>
                       </a-col>
                     </a-row>
+                    <a-form-item label="单 SKU 增加买一送一规格" class="form-section form-section-offer">
+                      <a-radio-group v-model:value="productForm.buyOneTakeOne" button-style="solid" class="medium-radio-group">
+                        <a-radio-button :value="false">不添加</a-radio-button>
+                        <a-radio-button :value="true">添加</a-radio-button>
+                      </a-radio-group>
+                    </a-form-item>
                     <a-row :gutter="16" class="form-section form-section-switches">
                       <a-col :xs="24" :sm="12">
                         <a-form-item label="发布开关">
-                          <a-radio-group v-model:value="productForm.publish" button-style="solid" class="large-radio-group">
+                          <a-radio-group v-model:value="productForm.publish" button-style="solid" class="medium-radio-group equal-radio-group">
                             <a-radio-button :value="false">不发布</a-radio-button>
                             <a-radio-button :value="true">发布</a-radio-button>
                           </a-radio-group>
@@ -1352,22 +1425,26 @@
                       </a-col>
                       <a-col :xs="24" :sm="12">
                         <a-form-item label="完成后继续秒杀">
-                          <a-radio-group v-model:value="productForm.runFlashAfterEdit" button-style="solid" class="large-radio-group">
+                          <a-radio-group v-model:value="productForm.runFlashAfterEdit" button-style="solid" class="medium-radio-group">
                             <a-radio-button :value="false">不执行</a-radio-button>
                             <a-radio-button :value="true">执行</a-radio-button>
                           </a-radio-group>
                         </a-form-item>
                       </a-col>
                     </a-row>
-                    <div v-if="productForm.runFlashAfterEdit" class="form-section form-section-small">
+                    <div v-if="productForm.runFlashAfterEdit" class="form-section form-section-small flash-selection-row">
                       <a-form-item label="秒杀活动数量">
-                        <a-radio-group v-model:value="productForm.productFlashSelectionMode" button-style="solid">
+                        <a-radio-group v-model:value="productForm.productFlashSelectionMode" button-style="solid" class="medium-radio-group">
                           <a-radio-button value="count">指定数量</a-radio-button>
                           <a-radio-button value="all">全部活动</a-radio-button>
                         </a-radio-group>
                       </a-form-item>
-                      <a-form-item v-if="productForm.productFlashSelectionMode === 'count'" label="指定数量">
-                        <a-input-number v-model:value="productForm.flashCount" :min="1" :max="100" size="large" class="full-width" />
+                      <a-form-item
+                        label="指定数量"
+                        :class="{ 'flash-count-placeholder': productForm.productFlashSelectionMode !== 'count' }"
+                        :aria-hidden="productForm.productFlashSelectionMode !== 'count'"
+                      >
+                        <a-input-number v-model:value="productForm.flashCount" :min="1" :max="100" size="middle" class="full-width" />
                       </a-form-item>
                     </div>
                     <div class="summary-box form-section form-section-summary">
@@ -1385,15 +1462,19 @@
                     description="独立处理进行中的秒杀活动，会按活动标题添加商品并设置折扣。"
                   />
                   <a-form layout="vertical" class="task-form">
-                    <div class="form-section form-section-small">
+                    <div class="form-section form-section-small flash-selection-row">
                       <a-form-item label="秒杀活动数量">
-                        <a-radio-group v-model:value="flashForm.flashSelectionMode" button-style="solid">
+                        <a-radio-group v-model:value="flashForm.flashSelectionMode" button-style="solid" class="medium-radio-group">
                           <a-radio-button value="count">指定数量</a-radio-button>
                           <a-radio-button value="all">全部活动</a-radio-button>
                         </a-radio-group>
                       </a-form-item>
-                      <a-form-item v-if="flashForm.flashSelectionMode === 'count'" label="指定数量">
-                        <a-input-number v-model:value="flashForm.flashCount" :min="1" :max="100" size="large" class="full-width" />
+                      <a-form-item
+                        label="指定数量"
+                        :class="{ 'flash-count-placeholder': flashForm.flashSelectionMode !== 'count' }"
+                        :aria-hidden="flashForm.flashSelectionMode !== 'count'"
+                      >
+                        <a-input-number v-model:value="flashForm.flashCount" :min="1" :max="100" size="middle" class="full-width" />
                       </a-form-item>
                     </div>
                     <div class="summary-box form-section form-section-summary">
@@ -1688,9 +1769,9 @@
 
               <a-card v-if="currentPage !== 'config' && currentPage !== 'collect'" title="最近记录" :class="['soft-card', 'history-panel', { 'home-history-panel': currentPage === 'home' }]">
                 <template #extra>
-                  <a-button :disabled="!hasHistory" @click="clearHistory">清理记录</a-button>
+                  <a-button :disabled="!hasVisibleHistory" @click="clearHistory">清理记录</a-button>
                 </template>
-                <a-list :data-source="history" :locale="{ emptyText: '暂无记录' }">
+                <a-list :data-source="visibleHistory" :locale="{ emptyText: '暂无记录' }">
                   <template #renderItem="{ item }">
                     <a-list-item>
                       <a-list-item-meta>

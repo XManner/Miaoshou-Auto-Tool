@@ -35,12 +35,18 @@ assert.ok(
   'Collection runs should open 1688.com before searching from the home page.',
 );
 assert.ok(
-  collectScriptSource.includes('async function searchKeywordFromHome(page, keyword)'),
-  'Collection runs should search keywords from the 1688 home page input.',
+  collectScriptSource.includes('async function searchKeywordFromHome(browser, page, keyword)'),
+  'Collection runs should search keywords from the 1688 home page input and receive the browser for new-tab detection.',
 );
 assert.ok(
-  collectScriptSource.includes('await searchKeywordFromHome(page, keyword)'),
-  'Collection loops should use the 1688 home page search helper.',
+  collectScriptSource.includes('const searchPage = await searchKeywordFromHome(browser, page, keyword)')
+    && collectScriptSource.includes('await extractSearchCandidates(searchPage, keyword, options)'),
+  'Collection loops should extract candidates from the actual search-result page returned by the 1688 search helper.',
+);
+assert.ok(
+  collectScriptSource.includes("browser.waitForTarget")
+    && collectScriptSource.includes('findKeywordSearchResultPage(browser, keyword'),
+  '1688 keyword search should handle search results opened in a new tab.',
 );
 assert.ok(
   !collectScriptSource.includes('await page.goto(buildSearchUrl(keyword)'),
@@ -449,6 +455,33 @@ const customRejected = evaluateCandidate({
 });
 
 assert.strictEqual(customRejected.decision, 'reject', 'User-defined excluded terms should reject matching candidates.');
+
+const unrelatedKeywordCandidate = evaluateCandidate({
+  title: '紫苏杏仁颗粒特殊膳食紫苏粉杏仁粉定制OEM贴牌工厂ODM代加工',
+  keyword: '保湿乳',
+  price: 1,
+  shopName: '河南膳禾营养食品有限公司',
+}, DEFAULT_COLLECT_OPTIONS);
+
+assert.strictEqual(
+  unrelatedKeywordCandidate.decision,
+  'reject',
+  '1688 keyword collection should reject candidates unrelated to the active keyword.',
+);
+assert.match(unrelatedKeywordCandidate.reason, /关键词/, 'Keyword-mismatch skips should explain the active keyword.');
+
+const splitKeywordCandidate = evaluateCandidate({
+  title: '户外防晒遮阳空顶帽女夏季骑车防紫外线',
+  keyword: '防晒帽',
+  price: 6.8,
+  shopName: '义乌户外用品厂',
+}, DEFAULT_COLLECT_OPTIONS);
+
+assert.strictEqual(
+  splitKeywordCandidate.decision,
+  'collect',
+  'Chinese keyword relevance should allow common split matches such as 防晒 + 帽.',
+);
 
 assert.deepStrictEqual(
   parseWeightFromText('包装信息 重量(g) 120 净含量 30ml'),

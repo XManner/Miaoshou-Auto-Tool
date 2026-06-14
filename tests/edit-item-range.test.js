@@ -107,8 +107,8 @@ assert.ok(
   'Range mode should appear before all-products mode in the product page.',
 );
 assert.ok(
-  appSource.includes("itemSelectionMode: 'range'"),
-  'Range mode should be selected by default.',
+  appSource.includes("itemSelectionMode: 'all'"),
+  'All-products mode should be selected by default.',
 );
 assert.ok(
   appSource.includes('v-model:value="productForm.count"'),

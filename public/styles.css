@@ -386,7 +386,8 @@ body {
 }
 
 .form-section-pricing,
-.form-section-switches {
+.form-section-switches,
+.form-section-offer {
   grid-column: span 6;
 }
 
@@ -407,9 +408,83 @@ body {
   grid-column: 1 / -1;
 }
 
+.product-panel .form-section-mode {
+  grid-column: 1 / span 2;
+  grid-row: 1;
+}
+
+.product-panel .form-section-choice {
+  grid-column: 1 / span 2;
+  grid-row: 2;
+}
+
+.product-panel .form-section-range {
+  grid-column: 3 / span 4;
+  grid-row: 2;
+}
+
+.product-panel .form-section-range.range-placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.product-panel .form-section-pricing {
+  grid-column: 3 / span 4;
+  grid-row: 1;
+}
+
+.product-panel .form-section-offer {
+  grid-column: 7 / span 2;
+  grid-row: 1;
+}
+
+.product-panel .form-section-switches {
+  grid-column: 1 / span 4;
+  grid-row: 3;
+}
+
+.product-panel .flash-selection-row {
+  grid-column: 5 / span 4;
+  grid-row: 3;
+}
+
+.product-panel .medium-radio-group {
+  width: max-content;
+  grid-template-columns: repeat(2, max-content);
+}
+
+.product-panel .medium-radio-group .ant-radio-button-wrapper {
+  width: auto;
+  min-width: 76px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.product-panel .equal-radio-group {
+  width: 168px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.product-panel .equal-radio-group .ant-radio-button-wrapper {
+  min-width: 0;
+}
+
+.collect-panel .equal-radio-group {
+  width: 240px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.collect-panel .equal-radio-group .ant-radio-button-wrapper {
+  min-width: 0;
+}
+
 .collect-panel .task-form > .form-section,
 .collect-panel .form-section-summary {
   grid-column: 1 / -1;
+}
+
+.collect-panel .task-form > .form-section-choice {
+  grid-column: span 3;
 }
 
 .collect-auto-filter-panel {
@@ -430,7 +505,33 @@ body {
 }
 
 .flash-panel .form-section-summary {
-  grid-column: span 9;
+  grid-column: 1 / -1;
+}
+
+.flash-selection-row {
+  display: grid;
+  grid-template-columns: max-content 112px;
+  gap: 12px;
+  align-items: start;
+}
+
+.flash-selection-row .ant-form-item {
+  margin-bottom: 0;
+}
+
+.flash-selection-row .flash-count-placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.flash-selection-row .medium-radio-group {
+  width: max-content;
+  grid-template-columns: repeat(2, max-content);
+}
+
+.flash-selection-row .medium-radio-group .ant-radio-button-wrapper {
+  width: auto;
+  min-width: 88px;
 }
 
 .config-panel .ant-alert {
@@ -657,31 +758,44 @@ body {
   width: 100%;
 }
 
-.large-radio-group {
+.medium-radio-group {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 0;
   width: 100%;
 }
 
-.large-radio-group .ant-radio-button-wrapper {
-  height: 40px;
-  min-width: 128px;
-  padding: 0 24px;
-  line-height: 38px;
+.medium-radio-group .ant-radio-button-wrapper {
+  height: 32px;
+  width: 100%;
+  min-width: 96px;
+  padding: 0 16px;
+  line-height: 30px;
   text-align: center;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
   border-inline-start-width: 1px;
-  border-radius: 8px;
+  border-radius: 0;
+  box-sizing: border-box;
 }
 
-.large-radio-group .ant-radio-button-wrapper:not(:first-child)::before {
+.medium-radio-group .ant-radio-button-wrapper:not(:first-child) {
+  margin-left: -1px;
+}
+
+.medium-radio-group .ant-radio-button-wrapper:not(:first-child)::before {
   display: none;
 }
 
-.large-radio-group .ant-radio-button-wrapper:first-child,
-.large-radio-group .ant-radio-button-wrapper:last-child {
+.medium-radio-group .ant-radio-button-wrapper:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.medium-radio-group .ant-radio-button-wrapper:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.medium-radio-group .ant-radio-button-wrapper:only-child {
   border-radius: 8px;
 }
 
@@ -1101,12 +1215,23 @@ body {
   .form-section-mode,
   .form-section-pricing,
   .form-section-switches,
+  .form-section-offer,
   .form-section-small,
   .form-section-summary,
   .form-section-actions,
   .product-panel .form-section-summary,
   .product-panel .form-section-actions {
     grid-column: 1 / -1;
+  }
+
+  .product-panel .form-section-mode,
+  .product-panel .form-section-choice,
+  .product-panel .form-section-range,
+  .product-panel .form-section-pricing,
+  .product-panel .form-section-offer,
+  .product-panel .form-section-switches,
+  .product-panel .flash-selection-row {
+    grid-row: auto;
   }
 }
 
@@ -1145,10 +1270,6 @@ body {
   }
 
   .mode-button-group {
-    grid-template-columns: 1fr;
-  }
-
-  .large-radio-group {
     grid-template-columns: 1fr;
   }
 

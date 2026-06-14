@@ -278,6 +278,7 @@ function normalizeRunOptions(input = {}) {
   const processingMode = tasks.edit ? normalizeProcessingMode(input.processingMode) : PROCESSING_MODE_FAST;
   const sourcePriceExtraCny = tasks.edit ? normalizeSourcePriceExtraCny(input.sourcePriceExtraCny) : 0;
   const weightPaddingGrams = tasks.edit ? normalizeWeightPaddingGrams(input.weightPaddingGrams) : DEFAULT_WEIGHT_PADDING_GRAMS;
+  const buyOneTakeOne = tasks.edit ? normalizeBooleanOption(input.buyOneTakeOne, false) : false;
 
   const flashSelectionMode = tasks.flash ? normalizeFlashSelectionMode(input.flashSelectionMode) : FLASH_SELECTION_MODE_COUNT;
   const flashCount = tasks.flash && flashSelectionMode === FLASH_SELECTION_MODE_COUNT
@@ -296,6 +297,7 @@ function normalizeRunOptions(input = {}) {
     processingMode,
     sourcePriceExtraCny,
     weightPaddingGrams,
+    buyOneTakeOne,
     flashSelectionMode,
     flashCount,
     tasks,
@@ -493,6 +495,32 @@ function normalizeWeightPaddingGrams(value = DEFAULT_WEIGHT_PADDING_GRAMS) {
   }
 
   return Number(parsed.toFixed(1));
+}
+
+function normalizeBooleanOption(value, fallback = false) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+  }
+
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) {
+    return false;
+  }
+  return fallback;
 }
 
 function normalizeProcessingMode(value = PROCESSING_MODE_FAST) {
@@ -800,8 +828,24 @@ function combineWorkflowSummary(editSummary, flashSummary) {
   };
 }
 
+function isCollectionSummary(summary) {
+  return Boolean(summary && ['1688-collection', 'shopee-collection', 'amazon-collection'].includes(summary.mode));
+}
+
+function collectionSummaryReachedTarget(summary) {
+  if (!isCollectionSummary(summary)) {
+    return false;
+  }
+  const requestedCount = Number(summary.requestedCount);
+  const successCount = Number(summary.successCount);
+  return Number.isFinite(requestedCount)
+    && requestedCount > 0
+    && Number.isFinite(successCount)
+    && successCount >= requestedCount;
+}
+
 function collectionSummaryHasTargetShortfall(summary) {
-  if (!summary || !['1688-collection', 'shopee-collection'].includes(summary.mode)) {
+  if (!isCollectionSummary(summary)) {
     return false;
   }
   const requestedCount = Number(summary.requestedCount);
@@ -812,6 +856,9 @@ function collectionSummaryHasTargetShortfall(summary) {
 }
 
 function summaryHasErrors(summary) {
+  if (collectionSummaryReachedTarget(summary)) {
+    return false;
+  }
   return Number(summary && summary.errorCount) > 0 || collectionSummaryHasTargetShortfall(summary);
 }
 
@@ -864,15 +911,19 @@ function extractProcessErrorMessage(stderrText = '') {
 }
 
 function getSummaryErrorMessage(summary) {
-  const failedItems = Array.isArray(summary && summary.failedItems) ? summary.failedItems : [];
-  if (failedItems.length > 0) {
-    return failedItems[0].error || '任务结果包含失败项。';
-  }
-
   if (collectionSummaryHasTargetShortfall(summary)) {
     const successCount = Number.isFinite(Number(summary.successCount)) ? Number(summary.successCount) : 0;
     const requestedCount = Number.isFinite(Number(summary.requestedCount)) ? Number(summary.requestedCount) : 0;
     return `商品采集未达到目标：已采集 ${successCount}/${requestedCount} 个。`;
+  }
+
+  if (collectionSummaryReachedTarget(summary)) {
+    return '';
+  }
+
+  const failedItems = Array.isArray(summary && summary.failedItems) ? summary.failedItems : [];
+  if (failedItems.length > 0) {
+    return failedItems[0].error || '任务结果包含失败项。';
   }
 
   const results = Array.isArray(summary && summary.results) ? summary.results : [];
@@ -909,6 +960,7 @@ function serializeRun(run) {
     publish: run.publish,
     sourcePriceExtraCny: run.sourcePriceExtraCny || 0,
     weightPaddingGrams: run.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS,
+    buyOneTakeOne: Boolean(run.buyOneTakeOne),
     processingMode: run.processingMode,
     flashCount: run.flashCount,
     flashSelectionMode: run.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
@@ -984,6 +1036,7 @@ function rememberRun(run) {
     publish: run.publish,
     sourcePriceExtraCny: run.sourcePriceExtraCny || 0,
     weightPaddingGrams: run.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS,
+    buyOneTakeOne: Boolean(run.buyOneTakeOne),
     processingMode: run.processingMode,
     flashCount: run.flashCount,
     flashSelectionMode: run.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
@@ -1535,9 +1588,11 @@ function startRun(options) {
     String(options.sourcePriceExtraCny || 0),
     '--weight-padding-grams',
     String(options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS),
+    '--buy-one-take-one',
+    options.buyOneTakeOne ? 'true' : 'false',
   ];
   const itemSelectionMode = normalizeItemSelectionMode(options.itemSelectionMode);
-  const command = `node miaoshou_auto.js --count ${options.count} --item-selection-mode ${itemSelectionMode} --item-start-index ${options.itemStartIndex || 1} --item-end-index ${options.itemEndIndex || options.count || 1} --publish ${options.publish ? 'true' : 'false'} --source-price-extra ${options.sourcePriceExtraCny || 0} --weight-padding-grams ${options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS}`;
+  const command = `node miaoshou_auto.js --count ${options.count} --item-selection-mode ${itemSelectionMode} --item-start-index ${options.itemStartIndex || 1} --item-end-index ${options.itemEndIndex || options.count || 1} --publish ${options.publish ? 'true' : 'false'} --source-price-extra ${options.sourcePriceExtraCny || 0} --weight-padding-grams ${options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS} --buy-one-take-one ${options.buyOneTakeOne ? 'true' : 'false'}`;
   const run = {
     id: randomUUID(),
     count: options.count,
@@ -1547,6 +1602,7 @@ function startRun(options) {
     publish: options.publish,
     sourcePriceExtraCny: options.sourcePriceExtraCny || 0,
     weightPaddingGrams: options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS,
+    buyOneTakeOne: Boolean(options.buyOneTakeOne),
     flashCount: options.flashCount,
     flashSelectionMode: options.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
     tasks: options.tasks || { edit: true, flash: false },
@@ -1586,6 +1642,9 @@ function startRun(options) {
     appendLog(run, 'system', `来源价格额外加价：${run.sourcePriceExtraCny} 元。`);
   }
   appendLog(run, 'system', `重量额外加重：${run.weightPaddingGrams}g。`);
+  if (run.buyOneTakeOne) {
+    appendLog(run, 'system', '单 SKU Buy 1 Take 1 已开启。');
+  }
   if (accountSummary) {
     appendLog(run, 'system', `使用账号：${accountSummary.label}`);
   }

@@ -248,6 +248,9 @@ function normalizeOptions(input = {}) {
       max: 100,
       label: '最低评分',
     })),
+    requireKeywordMatch: input.requireKeywordMatch === undefined && input.collectRequireKeywordMatch === undefined
+      ? source === COLLECT_SOURCE_1688 && links.length === 0
+      : toBoolean(input.requireKeywordMatch ?? input.collectRequireKeywordMatch, true),
     safeMode: toBoolean(input.safeMode, DEFAULT_COLLECT_OPTIONS.safeMode),
     skipFilters: toBoolean(input.skipFilters || input.collectSkipFilters, DEFAULT_COLLECT_OPTIONS.skipFilters),
     headless: toBoolean(input.headless, DEFAULT_COLLECT_OPTIONS.headless),
@@ -557,6 +560,132 @@ function includesAny(text, terms = []) {
   return terms.find((term) => normalized.includes(normalizeText(term)));
 }
 
+function compactKeywordText(value = '') {
+  return normalizeText(value).replace(/[^a-z0-9\u4e00-\u9fff]+/gi, '');
+}
+
+function buildKeywordMatchTerms(keyword = '') {
+  const compactKeyword = compactKeywordText(keyword);
+  if (!compactKeyword || compactKeyword === '详情链接') {
+    return [];
+  }
+  const chineseOnly = compactKeyword.replace(/[^\u4e00-\u9fff]/g, '');
+  if (chineseOnly && chineseOnly.length === compactKeyword.length) {
+    if (chineseOnly.length <= 2) {
+      return [chineseOnly];
+    }
+    if (chineseOnly.length === 3) {
+      return [chineseOnly.slice(0, 2), chineseOnly.slice(2)];
+    }
+    return [chineseOnly.slice(0, 2), chineseOnly.slice(-2)];
+  }
+  return normalizeText(keyword)
+    .split(/[^a-z0-9\u4e00-\u9fff]+/i)
+    .map((term) => compactKeywordText(term))
+    .filter((term) => term.length >= 2 || /[\u4e00-\u9fff]/.test(term));
+}
+
+function isKeywordRelevantCandidate(candidate = {}, keyword = '') {
+  const compactKeyword = compactKeywordText(keyword || candidate.keyword);
+  if (!compactKeyword || compactKeyword === '详情链接') {
+    return true;
+  }
+  const haystack = compactKeywordText([
+    candidate.title,
+    candidate.shopName,
+    candidate.description,
+    candidate.sourceText,
+  ].filter(Boolean).join(' '));
+  if (!haystack) {
+    return false;
+  }
+  if (haystack.includes(compactKeyword)) {
+    return true;
+  }
+  const terms = buildKeywordMatchTerms(keyword || candidate.keyword);
+  return terms.length === 0 || terms.every((term) => haystack.includes(term));
+}
+
+function doesTextMatchKeyword(text = '', keyword = '') {
+  const compactKeyword = compactKeywordText(keyword);
+  if (!compactKeyword || compactKeyword === '详情链接') {
+    return true;
+  }
+  const haystack = compactKeywordText(text);
+  if (!haystack) {
+    return false;
+  }
+  if (haystack.includes(compactKeyword)) {
+    return true;
+  }
+  const terms = buildKeywordMatchTerms(keyword);
+  return terms.length === 0 || terms.every((term) => haystack.includes(term));
+}
+
+function isLikely1688SearchSnapshot(snapshot = {}) {
+  const url = String(snapshot.url || '');
+  const bodyText = String(snapshot.bodyText || '');
+  return /s\.1688\.com|offer_search|selloffer/i.test(url)
+    || (
+      Number(snapshot.offerLikeCount || 0) > 0
+      && /(综合|销量|价格|起订量|找货源|所在地区|商家特色|经营模式|已售)/.test(bodyText)
+    );
+}
+
+async function get1688SearchPageSnapshot(page) {
+  return page.evaluate(() => {
+    const searchInput = document.querySelector([
+      'input[name="keywords"]',
+      'input[name="keyword"]',
+      'input[placeholder*="搜索"]',
+      'input[placeholder*="请输入"]',
+      'input[type="search"]',
+      'input[type="text"]',
+      'textarea',
+    ].join(', '));
+    return {
+      url: window.location.href,
+      title: document.title || '',
+      inputValue: searchInput ? String(searchInput.value || searchInput.getAttribute('value') || '') : '',
+      bodyText: document.body ? document.body.innerText.replace(/\s+/g, ' ').slice(0, 1800) : '',
+      offerLikeCount: document.querySelectorAll('[data-renderkey], [data-offer-id], [data-offerid], a[href*="/offer/"], img[alt]').length,
+    };
+  }).catch(() => ({
+    url: page.url(),
+    title: '',
+    inputValue: '',
+    bodyText: '',
+    offerLikeCount: 0,
+  }));
+}
+
+async function isKeywordSearchResultPage(page, keyword = '') {
+  if (!page || page.isClosed()) {
+    return false;
+  }
+  const snapshot = await get1688SearchPageSnapshot(page);
+  return isLikely1688SearchSnapshot(snapshot)
+    && doesTextMatchKeyword(`${snapshot.url} ${snapshot.title} ${snapshot.inputValue} ${snapshot.bodyText}`, keyword);
+}
+
+async function findKeywordSearchResultPage(browser, keyword = '', preferredPages = []) {
+  const pages = [
+    ...preferredPages,
+    ...((await browser.pages().catch(() => [])) || []),
+  ];
+  const seen = new Set();
+  for (const page of pages.filter(Boolean).reverse()) {
+    if (seen.has(page)) {
+      continue;
+    }
+    seen.add(page);
+    if (await isKeywordSearchResultPage(page, keyword)) {
+      return page;
+    }
+  }
+  return null;
+}
+
 function unique(values = []) {
   return Array.from(new Set(values.filter(Boolean)));
 }
@@ -664,6 +793,11 @@ function evaluateCandidate(candidate = {}, rawOptions = DEFAULT_COLLECT_OPTIONS)
   const customExcludedHit = includesAny(haystack, options.excludedTerms);
   if (customExcludedHit) {
     return { decision: 'reject', score: 0, reason: `命中排除词：${customExcludedHit}` };
+  }
+
+  const keyword = String(candidate.keyword || '').trim();
+  if (options.requireKeywordMatch !== false && keyword && !isKeywordRelevantCandidate(candidate, keyword)) {
+    return { decision: 'reject', score: 0, reason: `与当前关键词“${keyword}”不匹配。` };
   }
 
   if (options.safeMode) {
@@ -1183,13 +1317,57 @@ async function maximizeBrowserWindow(page) {
   }
 }
 
+async function getBrowserWindowBounds(page) {
+  if (!page || page.isClosed()) {
+    return null;
+  }
+
+  const session = await page.target().createCDPSession().catch(() => null);
+  if (!session) {
+    return null;
+  }
+
+  try {
+    const windowInfo = await session.send('Browser.getWindowForTarget').catch(() => null);
+    const windowId = windowInfo && windowInfo.windowId;
+    if (!Number.isFinite(windowId)) {
+      return null;
+    }
+    return await session.send('Browser.getWindowBounds', { windowId }).catch(() => null);
+  } finally {
+    await session.detach().catch(() => {});
+  }
+}
+
 async function ensureLargeBrowserViewport(page) {
+  if (!page || page.isClosed()) {
+    return;
+  }
+
+  await maximizeBrowserWindow(page);
+  await sleep(300);
+
+  const windowBounds = await getBrowserWindowBounds(page);
+  const currentViewport = await page.evaluate(() => ({
+    width: window.innerWidth || document.documentElement.clientWidth || 0,
+    height: window.innerHeight || document.documentElement.clientHeight || 0,
+  })).catch(() => null);
+  const viewportWidth = Math.max(
+    DEFAULT_BROWSER_WINDOW_WIDTH,
+    Math.floor(Number(windowBounds && windowBounds.width) || 0),
+    Math.floor(Number(currentViewport && currentViewport.width) || 0),
+  );
+  const viewportHeight = Math.max(
+    DEFAULT_BROWSER_WINDOW_HEIGHT,
+    Math.floor(Number(currentViewport && currentViewport.height) || 0),
+    Math.floor((Number(windowBounds && windowBounds.height) || 0) - 120),
+  );
+
   await page.setViewport({
-    width: DEFAULT_BROWSER_WINDOW_WIDTH,
-    height: DEFAULT_BROWSER_WINDOW_HEIGHT,
+    width: viewportWidth,
+    height: viewportHeight,
     deviceScaleFactor: 1,
   }).catch(() => {});
-  await maximizeBrowserWindow(page);
 }
 
 function encode1688Keyword(value = '') {
@@ -1455,7 +1633,7 @@ async function findVisibleElement(page, selectors = []) {
   return null;
 }
 
-async function searchKeywordFromHome(page, keyword) {
+async function searchKeywordFromHome(browser, page, keyword) {
   log(`打开 1688 首页，在首页搜索框输入关键词：${keyword}`);
   await page.goto(DEFAULT_1688_HOME_URL, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT });
   await sleep(1800);
@@ -1478,10 +1656,40 @@ async function searchKeywordFromHome(page, keyword) {
   await sleep(200);
   await input.type(keyword, { delay: 80 });
   await sleep(300);
+  const openerTarget = page.target();
+  const existingTargets = new Set(browser.targets());
+  const newTabPromise = browser.waitForTarget((target) => {
+    if (target.type() !== 'page') {
+      return false;
+    }
+    if (existingTargets.has(target)) {
+      return false;
+    }
+    const opener = typeof target.opener === 'function' ? target.opener() : null;
+    if (opener && opener === openerTarget) {
+      return true;
+    }
+    return /1688\.com|about:blank/i.test(String(target.url() || ''));
+  }, { timeout: 8000 })
+    .then((target) => target.page())
+    .catch(() => null);
   const navigation = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT }).catch(() => null);
   await page.keyboard.press('Enter');
+  const openedPage = await Promise.race([
+    newTabPromise,
+    navigation.then(() => null),
+    sleep(5000).then(() => null),
+  ]);
   await navigation;
   await sleep(1500);
+  const searchPage = await findKeywordSearchResultPage(browser, keyword, [openedPage, page]);
+  if (searchPage && searchPage !== page) {
+    await searchPage.bringToFront().catch(() => {});
+    await ensureLargeBrowserViewport(searchPage);
+    log(`1688 搜索结果已切换到新标签页：${searchPage.url()}`);
+    return searchPage;
+  }
+  return page;
 }
 
 function normalizeOfferUrl(rawUrl = '') {
@@ -2728,8 +2936,8 @@ async function runCollection(options) {
       const candidates = options.links.length > 0
         ? options.links.map((url) => ({ title: url, url, price: '', keyword }))
         : await (async () => {
-          await searchKeywordFromHome(page, keyword);
-          const searchCandidates = await extractSearchCandidates(page, keyword, options);
+          const searchPage = await searchKeywordFromHome(browser, page, keyword);
+          const searchCandidates = await extractSearchCandidates(searchPage, keyword, options);
           log(`关键词 ${keyword} 找到候选商品 ${searchCandidates.length} 个。`);
           return searchCandidates;
         })();

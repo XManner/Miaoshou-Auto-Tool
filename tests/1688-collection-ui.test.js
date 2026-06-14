@@ -3,10 +3,25 @@ const fs = require('fs');
 const path = require('path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
 
 assert.ok(
   appSource.includes("collect: '商品采集'"),
   'Page titles should include 商品采集.',
+);
+assert.ok(
+  /label="采集来源"[\s\S]*<a-radio-group v-model:value="collectForm\.source" button-style="solid" class="medium-radio-group equal-radio-group"/.test(appSource)
+    && /label="采集模式"[\s\S]*<a-radio-group v-model:value="collectForm\.mode" button-style="solid" class="medium-radio-group equal-radio-group"/.test(appSource),
+  'Collection source and mode should use the same fixed-width button group as product edit controls.',
+);
+assert.ok(
+  /\.collect-panel \.task-form > \.form-section-choice\s*\{[^}]*grid-column:\s*span 3;/.test(styles),
+  'Collection source and mode controls should fit side by side on the same row.',
+);
+assert.ok(
+  /\.collect-panel \.equal-radio-group\s*\{[^}]*width:\s*240px;[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/.test(styles)
+    && /\.collect-panel \.equal-radio-group \.ant-radio-button-wrapper\s*\{[^}]*min-width:\s*0;/.test(styles),
+  'Collection fixed-width button groups should be wider than the product edit controls.',
 );
 assert.ok(
   appSource.includes("products: '编辑商品'"),

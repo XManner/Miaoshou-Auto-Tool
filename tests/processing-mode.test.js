@@ -7,28 +7,28 @@ const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js')
 const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
 
 assert.ok(
-  appSource.includes("processingMode: 'fast'"),
-  'Processing mode should default to fast mode in the UI.',
+  appSource.includes("processingMode: 'precise'"),
+  'Processing mode should default to precise mode in the UI.',
 );
 assert.ok(
-  appSource.includes('class="mode-button-group"'),
-  'Processing mode should use two button-style choices.',
+  /label="处理模式"[\s\S]*<a-radio-group v-model:value="productForm\.processingMode" button-style="solid" class="[^"]*\bmedium-radio-group\b[^"]*"[\s\S]*<a-radio-button value="fast"[^>]*>快速模式<\/a-radio-button>[\s\S]*<a-radio-button value="precise"[^>]*>精细模式<\/a-radio-button>/.test(appSource),
+  'Processing mode should use the same medium radio button group style as other single-select settings.',
 );
 assert.ok(
-  appSource.includes(':type="productForm.processingMode === \'fast\' ? \'primary\' : \'default\'"'),
-  'Fast mode button should show selected state.',
+  !appSource.includes('class="mode-button-group"'),
+  'Processing mode should not use a custom button group after radio styles are standardized.',
 );
 assert.ok(
-  appSource.includes(':type="productForm.processingMode === \'precise\' ? \'primary\' : \'default\'"'),
-  'Precise mode button should show selected state.',
+  !appSource.includes('@click="productForm.processingMode = \'fast\'"')
+    && !appSource.includes('@click="productForm.processingMode = \'precise\'"'),
+  'Processing mode should update through v-model instead of button click handlers.',
 );
 assert.ok(
-  appSource.includes('@click="productForm.processingMode = \'fast\'"'),
-  'Fast mode button should update the selected mode.',
-);
-assert.ok(
-  appSource.includes('@click="productForm.processingMode = \'precise\'"'),
-  'Precise mode button should update the selected mode.',
+  (appSource.match(/<a-radio-group\b/g) || []).length > 0
+    && (appSource.match(/<a-radio-group\b[^>]*>/g) || []).every((tag) => (
+      tag.includes('button-style="solid"') && /class="[^"]*\bmedium-radio-group\b[^"]*"/.test(tag)
+    )),
+  'Every radio group in the UI should use the standardized medium solid button group.',
 );
 assert.ok(
   appSource.includes('processingMode: productForm.processingMode'),
@@ -71,17 +71,44 @@ assert.ok(
   'Processing mode should no longer use long radio options.',
 );
 assert.ok(
-  /label="商品选择"[\s\S]*class="large-radio-group"/.test(appSource)
-    && /label="发布开关"[\s\S]*class="large-radio-group"/.test(appSource)
-    && /label="完成后继续秒杀"[\s\S]*class="large-radio-group"/.test(appSource),
-  'Product choice, publish, and follow-up flash-sale radios should use the large button group style.',
+  /label="商品选择"[\s\S]*class="medium-radio-group"/.test(appSource)
+    && /label="处理模式"[\s\S]*class="medium-radio-group"/.test(appSource)
+    && /label="发布开关"[\s\S]*class="medium-radio-group"/.test(appSource)
+    && /label="完成后继续秒杀"[\s\S]*class="medium-radio-group"/.test(appSource)
+    && /label="秒杀活动数量"[\s\S]*class="medium-radio-group"/.test(appSource),
+  'Single-select settings should use the medium button group style.',
 );
 assert.ok(
-  styles.includes('.large-radio-group .ant-radio-button-wrapper')
-    && styles.includes('height: 40px;')
-    && styles.includes('line-height: 38px;')
-    && styles.includes('font-size: 16px;'),
-  'Large radio button groups should match the processing mode button size.',
+  styles.includes('.medium-radio-group .ant-radio-button-wrapper')
+    && styles.includes('height: 32px;')
+    && styles.includes('line-height: 30px;')
+    && styles.includes('font-size: 14px;')
+    && styles.includes('padding: 0 16px;'),
+  'Medium radio button groups should use medium button sizing.',
+);
+assert.ok(
+  !appSource.includes('large-radio-group') && !styles.includes('.large-radio-group'),
+  'Config radio groups should no longer use the large button class.',
+);
+assert.ok(
+  /\.medium-radio-group\s*\{[\s\S]*?gap:\s*0;/.test(styles),
+  'Medium radio button groups should be connected without spacing between buttons.',
+);
+assert.ok(
+  /\.medium-radio-group \.ant-radio-button-wrapper\s*\{[\s\S]*?border-radius:\s*0;/.test(styles),
+  'Medium radio button group middle buttons should not keep standalone rounded corners.',
+);
+assert.ok(
+  /\.medium-radio-group \.ant-radio-button-wrapper:first-child\s*\{[\s\S]*?border-radius:\s*8px 0 0 8px;/.test(styles),
+  'Medium radio button group should only round the left outside corners.',
+);
+assert.ok(
+  /\.medium-radio-group \.ant-radio-button-wrapper:last-child\s*\{[\s\S]*?border-radius:\s*0 8px 8px 0;/.test(styles),
+  'Medium radio button group should only round the right outside corners.',
+);
+assert.ok(
+  !/@media \(max-width: 640px\)\s*\{[\s\S]*?\.medium-radio-group\s*\{\s*grid-template-columns:\s*1fr;\s*\}/.test(styles),
+  'Medium radio button groups should stay side-by-side on narrow screens.',
 );
 
 console.log('processing mode checks passed');

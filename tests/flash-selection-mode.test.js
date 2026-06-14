@@ -5,11 +5,12 @@ const path = require('path');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'web_server.js'), 'utf8');
 const flashSource = fs.readFileSync(path.join(__dirname, '..', 'miaoshou_flash_sale.js'), 'utf8');
+const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
 
 assert.ok(
-  appSource.includes("flashSelectionMode: 'count'")
-    && appSource.includes("productFlashSelectionMode: 'count'"),
-  'Product and flash forms should default flash activity selection to count mode.',
+  appSource.includes("flashSelectionMode: 'all'")
+    && appSource.includes("productFlashSelectionMode: 'all'"),
+  'Product and flash forms should default flash activity selection to all activities.',
 );
 assert.ok(
   appSource.includes('v-model:value="flashForm.flashSelectionMode"')
@@ -18,9 +19,34 @@ assert.ok(
   'Flash management should expose count/all radio mode choices.',
 );
 assert.ok(
-  appSource.includes("v-if=\"flashForm.flashSelectionMode === 'count'\"")
-    && appSource.includes("v-if=\"productForm.productFlashSelectionMode === 'count'\""),
-  'Flash count input should only be shown in count mode.',
+  /v-model:value="productForm\.productFlashSelectionMode" button-style="solid" class="medium-radio-group"/.test(appSource)
+    && /v-model:value="flashForm\.flashSelectionMode" button-style="solid" class="medium-radio-group"/.test(appSource),
+  'Product follow-up flash and flash-only selection modes should both use the standardized radio button group.',
+);
+assert.ok(
+  (appSource.match(/class="form-section form-section-small flash-selection-row"/g) || []).length === 2,
+  'Product follow-up flash and flash-only quantity controls should use the compact one-row layout.',
+);
+assert.ok(
+  /v-model:value="productForm\.productFlashSelectionMode"[\s\S]*<a-form-item[\s\S]*label="指定数量"[\s\S]*:class="\{ 'flash-count-placeholder': productForm\.productFlashSelectionMode !== 'count' \}"[\s\S]*:aria-hidden="productForm\.productFlashSelectionMode !== 'count'"/.test(appSource)
+    && /v-model:value="flashForm\.flashSelectionMode"[\s\S]*<a-form-item[\s\S]*label="指定数量"[\s\S]*:class="\{ 'flash-count-placeholder': flashForm\.flashSelectionMode !== 'count' \}"[\s\S]*:aria-hidden="flashForm\.flashSelectionMode !== 'count'"/.test(appSource),
+  'Flash quantity mode and count input should stay in the same row container without collapsing.',
+);
+assert.ok(
+  !appSource.includes("v-if=\"flashForm.flashSelectionMode === 'count'\"")
+    && !appSource.includes("v-if=\"productForm.productFlashSelectionMode === 'count'\"")
+    && appSource.includes(':aria-hidden="flashForm.flashSelectionMode !== \'count\'"')
+    && appSource.includes(':aria-hidden="productForm.productFlashSelectionMode !== \'count\'"'),
+  'Flash count input should be hidden in all mode without removing its layout slot.',
+);
+assert.ok(
+  /\.flash-selection-row \.flash-count-placeholder\s*\{[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none;/.test(styles),
+  'Hidden flash count inputs should be invisible without collapsing the row height.',
+);
+assert.ok(
+  /v-model:value="productForm\.flashCount"[^>]*size="middle"/.test(appSource)
+    && /v-model:value="flashForm\.flashCount"[^>]*size="middle"/.test(appSource),
+  'Flash count inputs should use medium size controls.',
 );
 assert.ok(
   appSource.includes('flashSelectionMode: productForm.productFlashSelectionMode')

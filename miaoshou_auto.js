@@ -173,6 +173,7 @@ const DEFAULT_SKU_WEIGHT_PADDING_GRAMS = Math.max(
   0,
   parseNumber(process.env.SKU_WEIGHT_PADDING_GRAMS, 30),
 );
+const BUY_ONE_TAKE_ONE_LABEL = 'Buy 1 Take 1';
 const DEFAULT_EXTERNAL_FETCH_TIMEOUT_MS = parsePositiveInteger(process.env.EXTERNAL_FETCH_TIMEOUT_MS, 12000);
 const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_MS = parsePositiveInteger(process.env.IMAGE_DOWNLOAD_TIMEOUT_MS, 12000);
 const ENABLE_1688_IMAGE_SOURCE_PRICE_LOOKUP = String(process.env.ENABLE_1688_IMAGE_SOURCE_PRICE_LOOKUP || '1') !== '0';
@@ -1298,6 +1299,210 @@ function buildNormalizedPreparedSpec(itemInfo = {}) {
   );
 }
 
+function buildBuyOneTakeOneTitle(title = '', maxTitleLength = DEFAULT_TITLE_MAX_LENGTH) {
+  const normalizedMaxLength = parsePositiveInteger(maxTitleLength, DEFAULT_TITLE_MAX_LENGTH);
+  const normalizedTitle = normalizeOptimizedTitle(title, normalizedMaxLength);
+  if (new RegExp(`^${BUY_ONE_TAKE_ONE_LABEL}\\b`, 'i').test(normalizedTitle)) {
+    return normalizedTitle;
+  }
+
+  const suffixMaxLength = Math.max(0, normalizedMaxLength - BUY_ONE_TAKE_ONE_LABEL.length - 1);
+  const suffix = suffixMaxLength > 0
+    ? normalizeOptimizedTitle(normalizedTitle, suffixMaxLength)
+    : '';
+  return normalizeOptimizedTitle(
+    suffix ? `${BUY_ONE_TAKE_ONE_LABEL} ${suffix}` : BUY_ONE_TAKE_ONE_LABEL,
+    normalizedMaxLength,
+  );
+}
+
+function buildUniqueBuyOneTakeOneAttrValueId({
+  itemInfo = {},
+  defaultAttrValueId = '',
+  existingAttrValueIds = [],
+} = {}) {
+  const existingIdSet = new Set(uniqueIdList(existingAttrValueIds));
+  let candidate = buildStableShortId([
+    itemInfo.detailId,
+    itemInfo.itemNum,
+    itemInfo.title,
+    defaultAttrValueId,
+    BUY_ONE_TAKE_ONE_LABEL,
+  ].filter(Boolean).join('|'));
+  let suffix = 1;
+
+  while (existingIdSet.has(candidate)) {
+    candidate = buildStableShortId(`${candidate}|${suffix}`);
+    suffix += 1;
+  }
+
+  return candidate;
+}
+
+function buildBuyOneTakeOneSkuKey(defaultSkuKey = '', defaultAttrValueId = '', offerAttrValueId = '') {
+  const offerValueId = normalizeText(offerAttrValueId);
+  if (!offerValueId) {
+    return '';
+  }
+
+  const tokens = parseSkuKeyAttrValueIds(defaultSkuKey);
+  if (tokens.length === 0) {
+    return normalizeSkuKeyToMultiSpec(defaultSkuKey, offerValueId);
+  }
+
+  const defaultValueId = normalizeText(defaultAttrValueId);
+  const replacementIndex = defaultValueId && tokens.includes(defaultValueId)
+    ? tokens.indexOf(defaultValueId)
+    : 0;
+  const nextTokens = tokens.map((token, index) => (index === replacementIndex ? offerValueId : token));
+  return `;${nextTokens.join(';')};`;
+}
+
+function doublePositiveCurrency(value) {
+  const normalized = normalizeCurrencyCny(value, null);
+  return normalized ? normalizeCurrencyCny(normalized * 2, value) : value;
+}
+
+function doublePositiveWeight(value) {
+  const normalized = parsePositiveNumber(value, null);
+  return normalized ? roundWeightKg(normalized * 2) : value;
+}
+
+function applyBuyOneTakeOneOfferToPreparedItem(itemInfo = {}, {
+  enabled = false,
+  maxTitleLength = DEFAULT_TITLE_MAX_LENGTH,
+  originalSkuCount = null,
+} = {}) {
+  if (!enabled) {
+    return {
+      itemInfo,
+      applied: false,
+      reason: 'disabled',
+    };
+  }
+
+  const skuEntries = Object.entries(itemInfo.skuMap || {});
+  const resolvedOriginalSkuCount = Number.isInteger(originalSkuCount)
+    ? originalSkuCount
+    : skuEntries.length;
+  if (resolvedOriginalSkuCount !== 1 || skuEntries.length !== 1) {
+    return {
+      itemInfo,
+      applied: false,
+      reason: resolvedOriginalSkuCount > 1 || skuEntries.length > 1 ? 'multiple_skus' : 'not_single_sku',
+    };
+  }
+
+  const [defaultSkuKey, defaultSkuValue] = skuEntries[0];
+  const cleanedPropertyList = cleanSkuPropertyList(itemInfo.skuPropertyList);
+  const defaultSkuKeyTokens = parseSkuKeyAttrValueIds(defaultSkuKey);
+  const firstProperty = cleanedPropertyList[0] || {
+    attrId: null,
+    attrName: DEFAULT_SINGLE_SPEC_ATTR_NAME,
+    attrValueList: [],
+  };
+  const firstValueList = Array.isArray(firstProperty.attrValueList)
+    ? firstProperty.attrValueList
+    : [];
+  const defaultValue = firstValueList.find((value) => (
+    defaultSkuKeyTokens.includes(normalizeText(value && value.attrValueId))
+  )) || firstValueList[0] || {
+    attrValueId: defaultSkuKeyTokens[0] || buildStableShortId(`${itemInfo.detailId || itemInfo.title || ''}|default`),
+    attrValue: DEFAULT_SINGLE_SPEC_ATTR_VALUE,
+  };
+  const defaultAttrValueId = normalizeText(defaultValue && defaultValue.attrValueId);
+  if (!defaultAttrValueId) {
+    return {
+      itemInfo,
+      applied: false,
+      reason: 'missing_default_spec_value',
+    };
+  }
+
+  const existingOfferValue = firstValueList.find((value) => (
+    normalizeText(value && value.attrValue).toLowerCase() === BUY_ONE_TAKE_ONE_LABEL.toLowerCase()
+  ));
+  const offerAttrValueId = normalizeText(existingOfferValue && existingOfferValue.attrValueId)
+    || buildUniqueBuyOneTakeOneAttrValueId({
+      itemInfo,
+      defaultAttrValueId,
+      existingAttrValueIds: firstValueList.map((value) => value && value.attrValueId),
+    });
+  const offerSkuKey = buildBuyOneTakeOneSkuKey(defaultSkuKey, defaultAttrValueId, offerAttrValueId);
+
+  if (!offerSkuKey || Object.prototype.hasOwnProperty.call(itemInfo.skuMap || {}, offerSkuKey)) {
+    return {
+      itemInfo,
+      applied: false,
+      reason: 'offer_sku_exists',
+    };
+  }
+
+  const fallbackImage = normalizeText(defaultValue && defaultValue.imgUrl)
+    || normalizeText(defaultSkuValue && defaultSkuValue.imgUrl)
+    || ((Array.isArray(itemInfo.imgUrls) && itemInfo.imgUrls.length > 0) ? itemInfo.imgUrls[0] : '');
+  const offerValue = existingOfferValue || {
+    ...cloneJson(defaultValue),
+    attrValueId: offerAttrValueId,
+    attrValue: BUY_ONE_TAKE_ONE_LABEL,
+    ...(fallbackImage ? { imgUrl: fallbackImage } : {}),
+    supplementarySkuImageUrls: Array.isArray(defaultValue && defaultValue.supplementarySkuImageUrls)
+      ? cloneJson(defaultValue.supplementarySkuImageUrls)
+      : [],
+  };
+  if (existingOfferValue && fallbackImage && !offerValue.imgUrl) {
+    offerValue.imgUrl = fallbackImage;
+  }
+
+  const hasDefaultValueInFirstList = firstValueList.some((value) => (
+    normalizeText(value && value.attrValueId) === defaultAttrValueId
+  ));
+  const baseFirstValueList = hasDefaultValueInFirstList
+    ? firstValueList
+    : [defaultValue, ...firstValueList];
+  const nextFirstValueList = existingOfferValue
+    ? baseFirstValueList.map((value) => (
+      normalizeText(value && value.attrValueId) === offerAttrValueId ? offerValue : value
+    ))
+    : [...baseFirstValueList, offerValue];
+  const nextSkuPropertyList = [
+    {
+      ...firstProperty,
+      attrName: normalizeText(firstProperty.attrName) || DEFAULT_SINGLE_SPEC_ATTR_NAME,
+      attrValueList: nextFirstValueList,
+    },
+    ...cleanedPropertyList.slice(1),
+  ];
+  const defaultItemNum = normalizeText(defaultSkuValue && defaultSkuValue.itemNum);
+  const offerSkuValue = {
+    ...cloneJson(defaultSkuValue),
+    itemNum: defaultItemNum ? `${defaultItemNum}-B1T1` : 'B1T1',
+    originPrice: doublePositiveCurrency(defaultSkuValue && defaultSkuValue.originPrice),
+    weight: doublePositiveWeight(defaultSkuValue && defaultSkuValue.weight),
+    shopIdToWarehouseIdAndStockMap: cloneJson(
+      defaultSkuValue && defaultSkuValue.shopIdToWarehouseIdAndStockMap
+        ? defaultSkuValue.shopIdToWarehouseIdAndStockMap
+        : {},
+    ),
+  };
+
+  return {
+    itemInfo: {
+      ...itemInfo,
+      title: buildBuyOneTakeOneTitle(itemInfo.title, maxTitleLength),
+      skuPropertyList: nextSkuPropertyList,
+      skuMap: {
+        ...itemInfo.skuMap,
+        [offerSkuKey]: offerSkuValue,
+      },
+    },
+    applied: true,
+    reason: 'applied',
+    offerSkuKey,
+    offerAttrValueId,
+  };
+}
+
 async function buildImageRelevanceMapWithMimo({
   imageUrls = [],
   title = '',
@@ -1971,9 +2176,11 @@ function buildPreparedSiteCollectItemInfo(
     translatedSkuPropertyList,
     preparedSpec,
     addWeightPadding = true,
+    buyOneTakeOne = false,
   } = {},
 ) {
   const simplifiedSpec = preparedSpec || buildNormalizedPreparedSpec(siteCollectItemInfo);
+  const originalSkuCount = Object.keys(siteCollectItemInfo.skuMap || {}).length;
   const skuCount = Object.keys(simplifiedSpec.skuMap || {}).length;
   const shouldForceUnifiedSkuWeight = parsePositiveNumber(grossWeightKg) !== null && skuCount <= 1;
   const resolvedWeight = clampGrossWeightKg(
@@ -2037,8 +2244,13 @@ function buildPreparedSiteCollectItemInfo(
     skuPropertyList: skuPropertyListWithSafeImages,
     skuMap: cleanedSkuMap,
   };
+  const offerPrepared = applyBuyOneTakeOneOfferToPreparedItem(preparedBase, {
+    enabled: Boolean(buyOneTakeOne),
+    maxTitleLength,
+    originalSkuCount,
+  });
 
-  const preparedWithDefaults = sanitizeOptionalFields(withDeliveryOptionDefaults(preparedBase));
+  const preparedWithDefaults = sanitizeOptionalFields(withDeliveryOptionDefaults(offerPrepared.itemInfo));
   const ensuredShopConfig = referenceShopConfig
     ? applyReferenceShopConfig(preparedWithDefaults, referenceShopConfig)
     : ensurePreferredPhShopConfig(preparedWithDefaults, claimToShopIds);
@@ -2807,6 +3019,49 @@ function summarizeClaimCoverageByGroup(shopIds = [], shopGroupIndex = {}, requir
   };
 }
 
+function buildRequiredShopGroupKeysForWarehouseCapability({
+  groups = [],
+  preferredWarehouseShopIdSet = null,
+} = {}) {
+  const normalizedGroups = Array.isArray(groups) ? groups : [];
+  const warehouseCapableShopIdSet = preferredWarehouseShopIdSet instanceof Set
+    ? preferredWarehouseShopIdSet
+    : new Set(uniqueIdList(preferredWarehouseShopIdSet || []));
+  const shouldFilterByWarehouseCapability = warehouseCapableShopIdSet.size > 0;
+
+  return normalizedGroups
+    .filter((group) => {
+      const shops = Array.isArray(group && group.shops) ? group.shops : [];
+      if (shops.length === 0) {
+        return false;
+      }
+      if (!shouldFilterByWarehouseCapability) {
+        return true;
+      }
+      return shops.some((shop) => warehouseCapableShopIdSet.has(String(shop && shop.shopId)));
+    })
+    .map((group) => group.groupKey)
+    .filter(Boolean);
+}
+
+function filterClaimShopIdsToGroupKeys({
+  shopIds = [],
+  shopGroupIndex = {},
+  requiredGroupKeys = [],
+} = {}) {
+  const requiredGroupKeySet = new Set(uniqueIdList(requiredGroupKeys));
+  if (requiredGroupKeySet.size === 0) {
+    return [];
+  }
+
+  return uniqueIdList(shopIds).filter((shopId) => {
+    const groupKey = shopGroupIndex.shopIdToGroupKey
+      ? shopGroupIndex.shopIdToGroupKey.get(String(shopId))
+      : null;
+    return groupKey && requiredGroupKeySet.has(groupKey);
+  });
+}
+
 function summarizeBlockingClaimCoverage(coverage = {}, shopGroupIndex = {}, sourceSite = '') {
   const groupMap = buildShopGroupMap(shopGroupIndex);
   const normalizedSourceSite = String(sourceSite || '').toUpperCase();
@@ -3365,9 +3620,10 @@ async function ensurePrePublishShopsForDetail({
     groupSites: resolvedGroupSites,
   });
   const groupList = Array.isArray(shopGroupIndex.groups) ? shopGroupIndex.groups : [];
-  const requiredGroupKeys = groupList
-    .filter((group) => Array.isArray(group.shops) && group.shops.length > 0)
-    .map((group) => group.groupKey);
+  const requiredGroupKeys = buildRequiredShopGroupKeysForWarehouseCapability({
+    groups: groupList,
+    preferredWarehouseShopIdSet,
+  });
   const requiredGroupCount = requiredGroupKeys.length;
 
   if (requiredGroupCount === 0) {
@@ -3522,9 +3778,10 @@ async function ensurePrePublishShopsForDetailV2({
     groupSites: resolvedGroupSites,
   });
   const groupList = Array.isArray(shopGroupIndex.groups) ? shopGroupIndex.groups : [];
-  const requiredGroupKeys = groupList
-    .filter((group) => Array.isArray(group.shops) && group.shops.length > 0)
-    .map((group) => group.groupKey);
+  const requiredGroupKeys = buildRequiredShopGroupKeysForWarehouseCapability({
+    groups: groupList,
+    preferredWarehouseShopIdSet,
+  });
   const requiredGroupCount = requiredGroupKeys.length;
 
   if (requiredGroupCount === 0) {
@@ -3538,15 +3795,19 @@ async function ensurePrePublishShopsForDetailV2({
   let currentData = currentDetail && currentDetail.data ? currentDetail.data : currentDetail;
   let currentItemInfo = currentData.siteCollectItemInfo || currentData.collectItemInfo || currentData.itemInfo || currentData;
   const rawInitialCoverageShopIds = collectClaimCoverageShopIds(currentData, currentItemInfo);
-  const initialCoverageShopIds = compactClaimShopIdsToOnePerGroup(
-    rawInitialCoverageShopIds,
+  const initialCoverageShopIds = filterClaimShopIdsToGroupKeys({
+    shopIds: compactClaimShopIdsToOnePerGroup(
+      rawInitialCoverageShopIds,
+      shopGroupIndex,
+      {
+        preferredSite: normalizedSite,
+        groupSites: resolvedGroupSites,
+        preferredShopIdSet: preferredWarehouseShopIdSet,
+      },
+    ),
     shopGroupIndex,
-    {
-      preferredSite: normalizedSite,
-      groupSites: resolvedGroupSites,
-      preferredShopIdSet: preferredWarehouseShopIdSet,
-    },
-  );
+    requiredGroupKeys,
+  });
   if (initialCoverageShopIds.length > 0) {
     const compactedSnapshot = applyClaimShopIdsToDetailSnapshot({
       detailData: currentDetail,
@@ -3567,24 +3828,29 @@ async function ensurePrePublishShopsForDetailV2({
   let autoClaimShopIds = [];
   let claimSelectionChanged = !isSameIdSet(rawInitialCoverageShopIds, initialCoverageShopIds);
   let warehouseMapped = false;
+  let lastWarehouseValidation = null;
 
   // Step 1: preserve an existing one-shop-per-group claim; only fill missing groups.
   const claimModeForStep1 = resolvedAutoClaimMode === 'singleGroup' ? 'singleGroup' : 'allGroups';
   try {
-    const plannedClaimShopIds = compactClaimShopIdsToOnePerGroup(await getAutoClaimShopIds({
-      platform,
-      sourceSite: normalizedSite,
-      groupSites: resolvedGroupSites,
-      mode: claimModeForStep1,
-      preferredSourceShopId,
-      existingShopIds: coverageShopIds,
-      preferredShopIdSet: preferredWarehouseShopIdSet,
-      forceRebuild: false,
-      randomize: false,
-    }), shopGroupIndex, {
-      preferredSite: normalizedSite,
-      groupSites: resolvedGroupSites,
-      preferredShopIdSet: preferredWarehouseShopIdSet,
+    const plannedClaimShopIds = filterClaimShopIdsToGroupKeys({
+      shopIds: compactClaimShopIdsToOnePerGroup(await getAutoClaimShopIds({
+        platform,
+        sourceSite: normalizedSite,
+        groupSites: resolvedGroupSites,
+        mode: claimModeForStep1,
+        preferredSourceShopId,
+        existingShopIds: coverageShopIds,
+        preferredShopIdSet: preferredWarehouseShopIdSet,
+        forceRebuild: false,
+        randomize: false,
+      }), shopGroupIndex, {
+        preferredSite: normalizedSite,
+        groupSites: resolvedGroupSites,
+        preferredShopIdSet: preferredWarehouseShopIdSet,
+      }),
+      shopGroupIndex,
+      requiredGroupKeys,
     });
     if (plannedClaimShopIds.length === 0) {
       throw new Error('Auto-claim failed: no shop candidates were generated.');
@@ -3604,7 +3870,8 @@ async function ensurePrePublishShopsForDetailV2({
     );
     const needsClaim = !plannedBlockingCoverage.blockingComplete
       || !isSameIdSet(plannedClaimShopIds, coverageShopIds)
-      || selectedShopIds.length === 0;
+      || selectedShopIds.length === 0
+      || claimSelectionChanged;
 
     if (needsClaim) {
       const resolvedClaimShopIds = await claimItemsToShopsResolvingGlobalConflicts({
@@ -3625,15 +3892,19 @@ async function ensurePrePublishShopsForDetailV2({
     }
 
     const rawAfterClaimShopIds = collectClaimCoverageShopIds(currentData, currentItemInfo);
-    const compactedAfterClaimShopIds = compactClaimShopIdsToOnePerGroup(
-      rawAfterClaimShopIds,
+    const compactedAfterClaimShopIds = filterClaimShopIdsToGroupKeys({
+      shopIds: compactClaimShopIdsToOnePerGroup(
+        rawAfterClaimShopIds,
+        shopGroupIndex,
+        {
+          preferredSite: normalizedSite,
+          groupSites: resolvedGroupSites,
+          preferredShopIdSet: preferredWarehouseShopIdSet,
+        },
+      ),
       shopGroupIndex,
-      {
-        preferredSite: normalizedSite,
-        groupSites: resolvedGroupSites,
-        preferredShopIdSet: preferredWarehouseShopIdSet,
-      },
-    );
+      requiredGroupKeys,
+    });
     if (!isSameIdSet(rawAfterClaimShopIds, compactedAfterClaimShopIds)) {
       claimSelectionChanged = true;
     }
@@ -3654,16 +3925,20 @@ async function ensurePrePublishShopsForDetailV2({
     blockingCoverage = summarizeBlockingClaimCoverage(coverage, shopGroupIndex, normalizedSite);
 
     for (let attempt = 0; !blockingCoverage.blockingComplete && attempt < 3; attempt += 1) {
-      const retryClaimShopIds = compactClaimShopIdsToOnePerGroup(buildAutoClaimShopIdsFromGroupIndex(shopGroupIndex, {
-        preferredSite: normalizedSite,
-        groupSites: resolvedGroupSites,
-        existingShopIds: coverageShopIds,
-        preferredShopIdSet: preferredWarehouseShopIdSet,
-        randomize: false,
-      }), shopGroupIndex, {
-        preferredSite: normalizedSite,
-        groupSites: resolvedGroupSites,
-        preferredShopIdSet: preferredWarehouseShopIdSet,
+      const retryClaimShopIds = filterClaimShopIdsToGroupKeys({
+        shopIds: compactClaimShopIdsToOnePerGroup(buildAutoClaimShopIdsFromGroupIndex(shopGroupIndex, {
+          preferredSite: normalizedSite,
+          groupSites: resolvedGroupSites,
+          existingShopIds: coverageShopIds,
+          preferredShopIdSet: preferredWarehouseShopIdSet,
+          randomize: false,
+        }), shopGroupIndex, {
+          preferredSite: normalizedSite,
+          groupSites: resolvedGroupSites,
+          preferredShopIdSet: preferredWarehouseShopIdSet,
+        }),
+        shopGroupIndex,
+        requiredGroupKeys,
       });
       const retryCoverage = summarizeClaimCoverageByGroup(retryClaimShopIds, shopGroupIndex, requiredGroupKeys);
       const retryBlockingCoverage = summarizeBlockingClaimCoverage(retryCoverage, shopGroupIndex, normalizedSite);
@@ -3686,15 +3961,19 @@ async function ensurePrePublishShopsForDetailV2({
         || currentData.itemInfo
         || currentData;
       const rawRetryClaimShopIds = collectClaimCoverageShopIds(currentData, currentItemInfo);
-      coverageShopIds = compactClaimShopIdsToOnePerGroup(
-        rawRetryClaimShopIds,
+      coverageShopIds = filterClaimShopIdsToGroupKeys({
+        shopIds: compactClaimShopIdsToOnePerGroup(
+          rawRetryClaimShopIds,
+          shopGroupIndex,
+          {
+            preferredSite: normalizedSite,
+            groupSites: resolvedGroupSites,
+            preferredShopIdSet: preferredWarehouseShopIdSet,
+          },
+        ),
         shopGroupIndex,
-        {
-          preferredSite: normalizedSite,
-          groupSites: resolvedGroupSites,
-          preferredShopIdSet: preferredWarehouseShopIdSet,
-        },
-      );
+        requiredGroupKeys,
+      });
       if (!isSameIdSet(rawRetryClaimShopIds, coverageShopIds)) {
         claimSelectionChanged = true;
       }
@@ -3748,7 +4027,7 @@ async function ensurePrePublishShopsForDetailV2({
       throw new Error('No claimed child shops found after claim step.');
     }
 
-    const warehouseBlueprint = await buildWarehouseBlueprintFromShopWarehouseApi({
+    const warehouseBlueprint = await buildWarehouseBlueprintFromShopWarehouseApiByShopSite({
       site: normalizedSite,
       selectedShopIds,
       selectedShops: Array.isArray(currentItemInfo.collectBoxDetailShopList)
@@ -3762,6 +4041,14 @@ async function ensurePrePublishShopsForDetailV2({
         : null;
       return !(Array.isArray(warehouseIds) && warehouseIds.length > 0);
     });
+    lastWarehouseValidation = {
+      site: normalizedSite,
+      attempts: attempt + 1,
+      selectedShopIds,
+      missingShopIds: missingWarehouseShopIds,
+      unresolvedMissingShopIds: [],
+      replacementLogs: [],
+    };
 
     if (missingWarehouseShopIds.length === 0) {
       warehouseMapped = true;
@@ -3776,10 +4063,16 @@ async function ensurePrePublishShopsForDetailV2({
       shopGroupIndex,
       preferredShopIdSet: preferredWarehouseShopIdSet,
     });
+    lastWarehouseValidation = {
+      ...lastWarehouseValidation,
+      unresolvedMissingShopIds: reclaimPlan.unresolvedMissingShopIds,
+      replacementLogs: reclaimPlan.replacementLogs,
+    };
     if (reclaimPlan.claimShopIds.length === 0 || reclaimPlan.replacementLogs.length === 0) {
-      throw new Error(
-        `Warehouse mapping missing for claimed shops and cannot be auto-replaced: ${missingWarehouseShopIds.join(',')}`,
-      );
+      throw new Error(formatWarehouseMappingValidationError({
+        ...lastWarehouseValidation,
+        reason: 'Cannot auto-replace claimed shops without warehouse mapping',
+      }));
     }
 
     const resolvedReclaimShopIds = await claimItemsToShopsResolvingGlobalConflicts({
@@ -3798,15 +4091,19 @@ async function ensurePrePublishShopsForDetailV2({
       || currentData.itemInfo
       || currentData;
     const rawReclaimShopIds = collectClaimCoverageShopIds(currentData, currentItemInfo);
-    coverageShopIds = compactClaimShopIdsToOnePerGroup(
-      rawReclaimShopIds,
+    coverageShopIds = filterClaimShopIdsToGroupKeys({
+      shopIds: compactClaimShopIdsToOnePerGroup(
+        rawReclaimShopIds,
+        shopGroupIndex,
+        {
+          preferredSite: normalizedSite,
+          groupSites: resolvedGroupSites,
+          preferredShopIdSet: preferredWarehouseShopIdSet,
+        },
+      ),
       shopGroupIndex,
-      {
-        preferredSite: normalizedSite,
-        groupSites: resolvedGroupSites,
-        preferredShopIdSet: preferredWarehouseShopIdSet,
-      },
-    );
+      requiredGroupKeys,
+    });
     if (!isSameIdSet(rawReclaimShopIds, coverageShopIds)) {
       claimSelectionChanged = true;
     }
@@ -3826,7 +4123,10 @@ async function ensurePrePublishShopsForDetailV2({
   }
 
   if (!warehouseMapped) {
-    throw new Error('Warehouse mapping validation failed after retries.');
+    throw new Error(formatWarehouseMappingValidationError(lastWarehouseValidation || {
+      site: normalizedSite,
+      attempts: 3,
+    }));
   }
 
   return {
@@ -3994,6 +4294,7 @@ async function buildUpdatedTitleSiteCollectItemInfo(
     skuTranslationModel = getSkuTranslationModel(),
     sourcePriceExtraCny = 0,
     skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
+    buyOneTakeOne = false,
   } = {},
 ) {
   const data = apiData && apiData.data ? apiData.data : apiData;
@@ -4037,6 +4338,7 @@ async function buildUpdatedTitleSiteCollectItemInfo(
     translatedSkuPropertyList,
     preparedSpec: normalizedPreparedSpec,
     addWeightPadding: shouldAddWeightPadding,
+    buyOneTakeOne,
   });
   const updatedInfo = prepared.siteCollectItemInfo;
   const newTitle = updatedInfo.title;
@@ -4459,6 +4761,39 @@ function buildSelectedShopEntryMap({
   return selectedShopMap;
 }
 
+function groupSelectedShopIdsBySite({
+  site = '',
+  selectedShopIds = [],
+  selectedShops = [],
+  currentItemInfo = {},
+} = {}) {
+  const normalizedSite = String(site || '').toUpperCase();
+  const normalizedSelectedShopIds = uniqueIdList(selectedShopIds);
+  const selectedShopMap = buildSelectedShopEntryMap({
+    site: normalizedSite,
+    selectedShopIds: normalizedSelectedShopIds,
+    selectedShops,
+    currentItemInfo,
+  });
+  const grouped = {};
+
+  for (const shopId of normalizedSelectedShopIds) {
+    const selectedShop = selectedShopMap.get(String(shopId));
+    const siteKey = String(
+      selectedShop && selectedShop.site ? selectedShop.site : normalizedSite,
+    ).toUpperCase();
+    const resolvedSite = siteKey || normalizedSite;
+    if (!grouped[resolvedSite]) {
+      grouped[resolvedSite] = [];
+    }
+    grouped[resolvedSite].push(String(shopId));
+  }
+
+  return Object.fromEntries(
+    Object.entries(grouped).map(([siteKey, shopIds]) => [siteKey, uniqueIdList(shopIds)]),
+  );
+}
+
 function collectActiveWarehouseIds(warehouseList = []) {
   const normalizedList = Array.isArray(warehouseList) ? warehouseList : [];
   const activeWarehouses = normalizedList.filter((warehouse) => String(warehouse.warehouseEffectStatus || '1') === '1');
@@ -4501,6 +4836,64 @@ async function buildWarehouseBlueprintFromShopWarehouseApi({
     const warehouseIds = collectActiveWarehouseIds(warehouseEntry && warehouseEntry.warehouseList);
     if (warehouseIds.length > 0) {
       shopIdToWarehouseIds[String(shopId)] = warehouseIds;
+    }
+  }
+
+  return {
+    collectBoxDetailShopList,
+    shopIdToWarehouseIds,
+  };
+}
+
+async function buildWarehouseBlueprintFromShopWarehouseApiByShopSite({
+  site,
+  selectedShopIds = [],
+  selectedShops = [],
+  currentItemInfo = {},
+} = {}) {
+  const normalizedSite = String(site || '').toUpperCase();
+  const normalizedSelectedShopIds = uniqueIdList(selectedShopIds);
+  const selectedShopMap = buildSelectedShopEntryMap({
+    site: normalizedSite,
+    selectedShopIds: normalizedSelectedShopIds,
+    selectedShops,
+    currentItemInfo,
+  });
+  const selectedShopIdsBySite = groupSelectedShopIdsBySite({
+    site: normalizedSite,
+    selectedShopIds: normalizedSelectedShopIds,
+    selectedShops,
+    currentItemInfo,
+  });
+  const collectBoxDetailShopList = [];
+  const shopIdToWarehouseIds = {};
+
+  for (const shopId of normalizedSelectedShopIds) {
+    const normalizedShop = selectedShopMap.get(String(shopId));
+    if (normalizedShop) {
+      collectBoxDetailShopList.push(normalizedShop);
+    }
+  }
+
+  for (const [siteKey, siteShopIds] of Object.entries(selectedShopIdsBySite)) {
+    if (!siteKey || !Array.isArray(siteShopIds) || siteShopIds.length === 0) {
+      continue;
+    }
+    const resultList = await collectShopWarehouseListBySite({
+      site: siteKey,
+      shopIds: siteShopIds,
+    });
+    const warehouseInfoByShopId = new Map(
+      (Array.isArray(resultList) ? resultList : [])
+        .map((entry) => [String(entry.shopId), entry]),
+    );
+
+    for (const shopId of siteShopIds) {
+      const warehouseEntry = warehouseInfoByShopId.get(String(shopId));
+      const warehouseIds = collectActiveWarehouseIds(warehouseEntry && warehouseEntry.warehouseList);
+      if (warehouseIds.length > 0) {
+        shopIdToWarehouseIds[String(shopId)] = warehouseIds;
+      }
     }
   }
 
@@ -4719,6 +5112,55 @@ async function resolveSiteWarehouseBlueprint({
   return mergedBlueprint;
 }
 
+function formatWarehouseMappingValidationError({
+  site = '',
+  attempts = 3,
+  selectedShopIds = [],
+  missingShopIds = [],
+  unresolvedMissingShopIds = [],
+  replacementLogs = [],
+  reason = '',
+} = {}) {
+  const attemptCount = Math.max(1, Number.parseInt(attempts, 10) || 3);
+  const parts = [`Warehouse mapping validation failed after ${attemptCount} retries`];
+  const siteText = String(site || '').trim().toUpperCase();
+  const selected = uniqueIdList(selectedShopIds);
+  const missing = uniqueIdList(missingShopIds);
+  const unresolved = uniqueIdList(unresolvedMissingShopIds);
+  const replacementText = (Array.isArray(replacementLogs) ? replacementLogs : [])
+    .map((entry) => {
+      const fromShopId = String(entry && entry.fromShopId ? entry.fromShopId : '').trim();
+      const toShopId = String(entry && entry.toShopId ? entry.toShopId : '').trim();
+      const toSite = String(entry && entry.toSite ? entry.toSite : '').trim().toUpperCase();
+      if (!fromShopId || !toShopId) {
+        return '';
+      }
+      return `${fromShopId}->${toShopId}${toSite ? `(${toSite})` : ''}`;
+    })
+    .filter(Boolean);
+
+  if (reason) {
+    parts.push(String(reason));
+  }
+  if (siteText) {
+    parts.push(`site ${siteText}`);
+  }
+  if (selected.length > 0) {
+    parts.push(`selected shops: ${selected.join(',')}`);
+  }
+  if (missing.length > 0) {
+    parts.push(`missing warehouse shops: ${missing.join(',')}`);
+  }
+  if (unresolved.length > 0) {
+    parts.push(`unresolved missing shops: ${unresolved.join(',')}`);
+  }
+  if (replacementText.length > 0) {
+    parts.push(`replacements tried: ${replacementText.join(',')}`);
+  }
+
+  return `${parts.join('; ')}.`;
+}
+
 function parseMissingShopIdsFromWarehouseError(error) {
   const message = String(error && error.message ? error.message : error || '');
   const matched = message.match(/Missing shops:\s*([0-9,\s]+)/i);
@@ -4767,18 +5209,24 @@ function buildClaimShopIdsAvoidingMissingSourceShops({
         : null) === groupKey
     ));
 
+    const availableGroupShops = group.shops.filter(
+      (shop) => !normalizedMissingShopIds.includes(String(shop && shop.shopId)),
+    );
     const candidatePreferredSites = [
       ...normalizedGroupSites.filter((site) => site !== normalizedSourceSite),
       normalizedSourceSite,
     ];
-    const replacementShop = selectOneSiteShopPerGroup(group, candidatePreferredSites, {
+    const replacementShop = selectOneSiteShopPerGroup({
+      ...group,
+      shops: availableGroupShops,
+    }, candidatePreferredSites, {
       preferredShopIdSet,
     });
     const replacementShopId = replacementShop && replacementShop.shopId
       ? String(replacementShop.shopId)
       : '';
 
-    if (!replacementShopId) {
+    if (!replacementShopId || normalizedMissingShopIds.includes(replacementShopId)) {
       unresolvedMissingShopIds.push(String(missingShopId));
       continue;
     }
@@ -5252,6 +5700,7 @@ async function optimizeQueriedItemTitles({
   forceClaimMode = '',
   sourcePriceExtraCny = 0,
   skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
+  buyOneTakeOne = false,
   onProgress = null,
 } = {}) {
   if (!site) {
@@ -5503,6 +5952,7 @@ async function optimizeQueriedItemTitles({
             skuTranslationModel,
             sourcePriceExtraCny,
             skuWeightPaddingGrams,
+            buyOneTakeOne,
           },
         );
         const claimSelectionChanged = Boolean(ensuredShops.claimSelectionChanged)
@@ -5538,6 +5988,7 @@ async function optimizeQueriedItemTitles({
             : null,
           sourcePriceExtraCny: normalizeSourcePriceExtraCny(sourcePriceExtraCny),
           skuWeightPaddingGrams: normalizeSkuWeightPaddingGrams(skuWeightPaddingGrams),
+          buyOneTakeOne: Boolean(buyOneTakeOne),
           oldSpecDimension,
           newSpecDimension,
           removedSecondSpec,
@@ -5935,6 +6386,7 @@ async function editAndPublishCollectBoxItems({
   forceClaimMode = '',
   sourcePriceExtraCny = 0,
   skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
+  buyOneTakeOne = false,
   onProgress = null,
 } = {}) {
   const normalizedSite = String(site || '').toUpperCase();
@@ -6017,6 +6469,7 @@ async function editAndPublishCollectBoxItems({
     forceClaimMode,
     sourcePriceExtraCny,
     skuWeightPaddingGrams,
+    buyOneTakeOne,
     onProgress: emitWorkflowProgress,
   });
 
@@ -6233,6 +6686,7 @@ async function runDefaultEditWorkflow({
   groupSites = DEFAULT_WORKFLOW_GROUP_SITES,
   sourcePriceExtraCny = 0,
   skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
+  buyOneTakeOne = false,
   onProgress = null,
 } = {}) {
   const selectionMode = normalizeItemSelectionMode(itemSelectionMode);
@@ -6267,6 +6721,7 @@ async function runDefaultEditWorkflow({
     forceClaimMode: '',
     sourcePriceExtraCny,
     skuWeightPaddingGrams,
+    buyOneTakeOne,
     onProgress,
     searchParams,
   });
@@ -6283,6 +6738,7 @@ async function runDefaultEditWorkflow({
       groupSites: normalizedGroupSites,
       sourcePriceExtraCny: normalizeSourcePriceExtraCny(sourcePriceExtraCny),
       skuWeightPaddingGrams: normalizeSkuWeightPaddingGrams(skuWeightPaddingGrams),
+      buyOneTakeOne: Boolean(buyOneTakeOne),
     },
     ...result,
   };
@@ -6326,6 +6782,7 @@ async function main() {
       groupSites: args.groupSites.length > 0 ? args.groupSites : DEFAULT_WORKFLOW_GROUP_SITES,
       sourcePriceExtraCny: args.sourcePriceExtraCny,
       skuWeightPaddingGrams: args.skuWeightPaddingGrams,
+      buyOneTakeOne: args.buyOneTakeOne,
       onProgress,
     });
     console.log(JSON.stringify(result, null, 2));
@@ -6368,6 +6825,7 @@ async function main() {
       groupSites: args.groupSites.length > 0 ? args.groupSites : DEFAULT_TIKTOK_SHOP_SITES,
       sourcePriceExtraCny: args.sourcePriceExtraCny,
       skuWeightPaddingGrams: args.skuWeightPaddingGrams,
+      buyOneTakeOne: args.buyOneTakeOne,
       searchParams: {
         pageNo: args.pageNo,
         pageSize: args.pageSize,
@@ -6512,6 +6970,7 @@ async function main() {
       forceClaimMode: '',
       sourcePriceExtraCny: args.sourcePriceExtraCny,
       skuWeightPaddingGrams: args.skuWeightPaddingGrams,
+      buyOneTakeOne: args.buyOneTakeOne,
       onProgress,
       searchParams: {
         pageNo: args.pageNo,
@@ -6590,6 +7049,7 @@ module.exports = {
   extractFreightPriceFromText,
   resolveGrossWeightFromText,
   applySourcePriceExtraCny,
+  applyBuyOneTakeOneOfferToPreparedItem,
   cleanSkuMap,
   addSkuWeightPaddingKg,
   shouldOverwriteSuspiciousOriginPrice,
@@ -6602,6 +7062,11 @@ module.exports = {
   optimizeQueriedItemTitles,
   syncSiteFieldsAcrossSites,
   syncShopConfigFromReference,
+  buildRequiredShopGroupKeysForWarehouseCapability,
+  filterClaimShopIdsToGroupKeys,
+  groupSelectedShopIdsBySite,
+  buildClaimShopIdsAvoidingMissingSourceShops,
+  formatWarehouseMappingValidationError,
   updateQueriedItemsToCategory,
   publishCollectBoxItems,
   editAndPublishCollectBoxItems,
