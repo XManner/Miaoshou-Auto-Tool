@@ -3639,6 +3639,22 @@ async function processActivity(browser, listPage, activity, runState) {
   };
 }
 
+function buildFailedActivityResult(activity = {}, activityError) {
+  const errorMessage = activityError && activityError.message
+    ? activityError.message
+    : String(activityError || '秒杀活动处理失败');
+  return {
+    activityTitle: activity.title || '',
+    activityId: activity.id || '',
+    addedProducts: 0,
+    unpricedProducts: 0,
+    submitted: null,
+    failedCount: 1,
+    error: errorMessage,
+    stage: 'flash-activity',
+  };
+}
+
 async function run() {
   const args = parseArgs();
   let browser = null;
@@ -3708,10 +3724,25 @@ async function run() {
       log('已回到最开始的秒杀活动列表页，准备寻找下一个活动。');
 
       markProcessedActivity(processedActivityKeys, target.activity);
-      const result = await processActivity(browser, listPage, target.activity, runState);
-      listPage = await ensureActivityListPage(browser, listPage, { quiet: true, resetScroll: true });
-      markProcessedActivity(processedActivityKeys, result);
-      results.push(result);
+      let progressResult = null;
+      try {
+        const result = await processActivity(browser, listPage, target.activity, runState);
+        listPage = await ensureActivityListPage(browser, listPage, { quiet: true, resetScroll: true });
+        markProcessedActivity(processedActivityKeys, result);
+        results.push(result);
+        progressResult = result;
+      } catch (activityError) {
+        await saveFlashFailureArtifacts(browser, failureContext, activityError);
+        const failedResult = buildFailedActivityResult(target.activity, activityError);
+        results.push(failedResult);
+        markProcessedActivity(processedActivityKeys, failedResult);
+        progressResult = failedResult;
+        log(`秒杀活动处理失败，已记录失败并继续后续活动：${failedResult.activityTitle || failedResult.activityId || '未知活动'}；${failedResult.error}`);
+        listPage = await ensureActivityListPage(browser, listPage, { quiet: true, resetScroll: true }).catch((recoverError) => {
+          log(`失败活动后回到秒杀列表页失败，将在下一轮继续尝试恢复：${recoverError.message || String(recoverError)}`);
+          return listPage;
+        });
+      }
       runState.completed += 1;
       emitProgress({
         phase: 'flash',
@@ -3719,7 +3750,7 @@ async function run() {
         completed: runState.completed,
         total: runState.total,
         totalCount: runState.total,
-        detailId: result.activityId,
+        detailId: progressResult && progressResult.activityId,
         overallPercent: Math.round((runState.completed / runState.total) * 100),
       });
     }

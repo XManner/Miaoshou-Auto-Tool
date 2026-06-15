@@ -1915,6 +1915,666 @@ function renderPage() {
 </html>`;
 }
 
+function escapeHtml(value = '') {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function firstFiniteDiagnosticNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) {
+      return number;
+    }
+  }
+  return null;
+}
+
+function formatDiagnosticNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? String(number) : '未记录';
+}
+
+function formatDiagnosticDate(value = '') {
+  if (!value) {
+    return '未记录';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function formatDiagnosticDuration(value) {
+  const durationMs = Number(value);
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return '未记录';
+  }
+
+  const totalSeconds = Math.round(durationMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}小时${minutes}分${seconds}秒`;
+  }
+  if (minutes > 0) {
+    return `${minutes}分${seconds}秒`;
+  }
+  return `${seconds}秒`;
+}
+
+function diagnosticStatusLabel(status = '') {
+  const labels = {
+    error: '执行失败',
+    stopped: '已停止',
+    success: '已完成',
+    running: '执行中',
+    pending: '等待中',
+  };
+  return labels[String(status || '')] || String(status || '未记录');
+}
+
+function diagnosticFailureTypeLabel(type = '') {
+  const labels = {
+    timeout: '页面超时',
+    captcha: '需要验证码',
+    login: '登录异常',
+    network: '网络或接口异常',
+    selector: '页面元素未找到',
+    stopped: '手动停止',
+    unknown: '未知问题',
+  };
+  return labels[String(type || '')] || String(type || '未知问题');
+}
+
+function diagnosticTaskLabel(tasks = {}) {
+  const labels = [];
+  if (tasks.edit) {
+    labels.push('编辑商品');
+  }
+  if (tasks.flash) {
+    labels.push('秒杀活动');
+  }
+  if (tasks.collect) {
+    labels.push('采集商品');
+  }
+  return labels.length > 0 ? labels.join(' + ') : '未记录';
+}
+
+function normalizeDiagnosticFailedItem(item = {}, group = '') {
+  const title = item.title
+    || item.name
+    || item.detailId
+    || item.activityId
+    || item.productId
+    || item.itemId
+    || item.id
+    || '未识别项目';
+  return {
+    group,
+    title: String(title),
+    detail: String(item.detailId || item.activityId || item.productId || item.itemId || item.id || ''),
+    error: String(item.error || item.reason || item.message || item.statusText || '未记录错误原因'),
+  };
+}
+
+function collectDiagnosticFailedItems(summary = {}) {
+  const failedItems = [];
+  const seen = new Set();
+  const addItems = (items, group = '') => {
+    if (!Array.isArray(items)) {
+      return;
+    }
+    for (const item of items) {
+      const normalized = normalizeDiagnosticFailedItem(item || {}, group);
+      const key = `${normalized.group}:${normalized.title}:${normalized.detail}:${normalized.error}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      failedItems.push(normalized);
+    }
+  };
+
+  addItems(summary.failedItems, '');
+  addItems(summary.edit && summary.edit.failedItems, '编辑商品');
+  addItems(summary.flash && summary.flash.failedItems, '秒杀活动');
+  addItems(summary.collect && summary.collect.failedItems, '采集商品');
+  addItems(summary.collection && summary.collection.failedItems, '采集商品');
+
+  if (Array.isArray(summary.results)) {
+    const failedResults = summary.results.filter((item) => {
+      const status = String(item && item.status ? item.status : '').toLowerCase();
+      return status === 'failed' || status === 'error' || Boolean(item && item.error);
+    });
+    addItems(failedResults, '');
+  }
+
+  return failedItems;
+}
+
+function importantDiagnosticLog(entry = {}) {
+  const text = `${entry.stream || ''} ${entry.text || ''}`;
+  return /(error|exception|timeout|not found|failed|失败|错误|异常|超时|验证码|登录|没有找到|找不到|等待|中断|停止|已记录失败)/i.test(text);
+}
+
+function buildDiagnosticLogRows(logs = []) {
+  const rows = Array.isArray(logs) ? logs : [];
+  const importantRows = rows.filter((entry) => importantDiagnosticLog(entry));
+  const selectedRows = importantRows.length > 0 ? importantRows.slice(-16) : rows.slice(-8);
+  return selectedRows.map((entry = {}) => ({
+    time: formatDiagnosticDate(entry.time || entry.createdAt || ''),
+    stream: String(entry.stream || 'system'),
+    text: String(entry.text || ''),
+  }));
+}
+
+function collectDiagnosticArtifacts(artifacts = []) {
+  if (!Array.isArray(artifacts)) {
+    return [];
+  }
+  return artifacts.map((artifact = {}, index) => {
+    const files = artifact.files && typeof artifact.files === 'object' ? artifact.files : {};
+    const links = Object.entries(files)
+      .map(([type, file]) => ({
+        type,
+        name: file && file.name ? String(file.name) : type,
+        url: file && file.url ? String(file.url) : '',
+      }))
+      .filter((file) => file.url);
+    const screenshot = links.find((file) => file.type === 'screenshot' || /\.(png|jpe?g|webp)$/i.test(file.url));
+    return {
+      index: index + 1,
+      stage: String(artifact.stage || artifact.label || '诊断证据'),
+      title: String(artifact.title || artifact.url || ''),
+      screenshot,
+      links,
+    };
+  }).filter((artifact) => artifact.screenshot || artifact.links.length > 0);
+}
+
+function buildDiagnosticViewModel(diagnostic = {}) {
+  const summary = diagnostic.summary && typeof diagnostic.summary === 'object' ? diagnostic.summary : {};
+  const progress = diagnostic.progress && typeof diagnostic.progress === 'object' ? diagnostic.progress : {};
+  const failedItems = collectDiagnosticFailedItems(summary);
+  const totalCount = firstFiniteDiagnosticNumber(summary.totalCount, progress.totalCount, progress.total);
+  const summarySuccessCount = firstFiniteDiagnosticNumber(summary.successCount);
+  const summaryFailedCount = firstFiniteDiagnosticNumber(
+    summary.failureCount,
+    summary.errorCount,
+    failedItems.length > 0 ? failedItems.length : null,
+  );
+  const completedCount = firstFiniteDiagnosticNumber(progress.successCount, progress.completed);
+  const progressFailedCount = firstFiniteDiagnosticNumber(progress.failureCount, progress.errorCount);
+  const percent = firstFiniteDiagnosticNumber(progress.overallPercent);
+  let progressText = '未记录';
+  if (summarySuccessCount !== null || summaryFailedCount !== null) {
+    progressText = `总数 ${formatDiagnosticNumber(totalCount)}，成功 ${formatDiagnosticNumber(summarySuccessCount)}，失败 ${formatDiagnosticNumber(summaryFailedCount || 0)}`;
+  } else if (totalCount !== null || completedCount !== null || progressFailedCount !== null) {
+    progressText = `总数 ${formatDiagnosticNumber(totalCount)}，已完成 ${formatDiagnosticNumber(completedCount)}，失败 ${formatDiagnosticNumber(progressFailedCount || 0)}`;
+  }
+
+  return {
+    id: String(diagnostic.id || ''),
+    title: diagnosticStatusLabel(diagnostic.status),
+    status: String(diagnostic.status || ''),
+    failureType: diagnosticFailureTypeLabel(diagnostic.failureType),
+    taskLabel: diagnosticTaskLabel(diagnostic.tasks || {}),
+    phase: String(progress.phaseLabel || progress.phase || '未记录'),
+    progressText,
+    percentText: percent !== null ? `${Math.max(0, Math.min(100, Math.round(percent)))}%` : '',
+    detailId: String(progress.detailId || ''),
+    account: diagnostic.account && diagnostic.account.label ? String(diagnostic.account.label) : '未记录',
+    startedAt: formatDiagnosticDate(diagnostic.startedAt),
+    endedAt: formatDiagnosticDate(diagnostic.endedAt),
+    generatedAt: formatDiagnosticDate(diagnostic.generatedAt),
+    duration: formatDiagnosticDuration(diagnostic.durationMs),
+    error: String(diagnostic.error || diagnostic.stderrTail || '没有记录到明确错误。'),
+    failedItems: failedItems.slice(0, 20),
+    failedItemOverflow: Math.max(0, failedItems.length - 20),
+    logs: buildDiagnosticLogRows(diagnostic.logs),
+    artifacts: collectDiagnosticArtifacts(diagnostic.artifacts),
+    rawJson: JSON.stringify(diagnostic, null, 2),
+  };
+}
+
+function renderDiagnosticMetric(label, value) {
+  return `<div class="metric-card">
+    <span>${escapeHtml(label)}</span>
+    <strong>${escapeHtml(value)}</strong>
+  </div>`;
+}
+
+function renderDiagnosticFailedItems(view) {
+  if (view.failedItems.length === 0) {
+    return `<section class="panel">
+      <h2>失败项</h2>
+      <p class="muted">没有记录到具体失败项。</p>
+    </section>`;
+  }
+
+  const rows = view.failedItems.map((item) => `<tr>
+    <td>${escapeHtml(item.group || '任务')}</td>
+    <td>${escapeHtml(item.title)}</td>
+    <td>${escapeHtml(item.detail || '-')}</td>
+    <td>${escapeHtml(item.error)}</td>
+  </tr>`).join('');
+  const overflow = view.failedItemOverflow > 0
+    ? `<p class="muted">还有 ${escapeHtml(view.failedItemOverflow)} 个失败项，请在原始诊断数据中查看。</p>`
+    : '';
+
+  return `<section class="panel">
+    <h2>失败项</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>类型</th>
+            <th>对象</th>
+            <th>ID</th>
+            <th>原因</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${overflow}
+  </section>`;
+}
+
+function renderDiagnosticLogs(logs = []) {
+  if (logs.length === 0) {
+    return `<section class="panel">
+      <h2>关键日志</h2>
+      <p class="muted">没有记录到关键日志。</p>
+    </section>`;
+  }
+  const rows = logs.map((entry) => `<li>
+    <span>${escapeHtml(entry.time)}</span>
+    <strong>${escapeHtml(entry.stream)}</strong>
+    <p>${escapeHtml(entry.text)}</p>
+  </li>`).join('');
+  return `<section class="panel">
+    <h2>关键日志</h2>
+    <ol class="log-list">${rows}</ol>
+  </section>`;
+}
+
+function renderDiagnosticArtifacts(artifacts = []) {
+  if (artifacts.length === 0) {
+    return `<section class="panel">
+      <h2>页面截图</h2>
+      <p class="muted">没有保存页面截图或证据文件。</p>
+    </section>`;
+  }
+
+  const cards = artifacts.map((artifact) => {
+    const image = artifact.screenshot
+      ? `<a class="screenshot" href="${escapeHtml(artifact.screenshot.url)}" target="_blank" rel="noopener">
+          <img src="${escapeHtml(artifact.screenshot.url)}" alt="诊断截图 ${escapeHtml(artifact.index)}">
+        </a>`
+      : '<div class="screenshot empty">无截图</div>';
+    const links = artifact.links.map((file) => `<a href="${escapeHtml(file.url)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>`).join('');
+    return `<article class="artifact-card">
+      ${image}
+      <div>
+        <h3>${escapeHtml(artifact.stage)}</h3>
+        ${artifact.title ? `<p>${escapeHtml(artifact.title)}</p>` : ''}
+        <div class="artifact-links">${links}</div>
+      </div>
+    </article>`;
+  }).join('');
+
+  return `<section class="panel">
+    <h2>页面截图</h2>
+    <div class="artifact-grid">${cards}</div>
+  </section>`;
+}
+
+function renderDiagnosticPage(diagnostic = {}) {
+  const view = buildDiagnosticViewModel(diagnostic);
+  const rawUrl = view.id ? `/api/diagnostics/${encodeURIComponent(view.id)}?format=json` : '';
+  const detailText = view.detailId ? `当前对象：${view.detailId}` : '当前对象未记录';
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>诊断摘要</title>
+  <style>
+    :root {
+      color: #1f2937;
+      background: #f3f6ff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 32px;
+      background: #f3f6ff;
+    }
+    .shell {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+    }
+    .page-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .page-header p {
+      margin: 0 0 8px;
+      color: #64748b;
+      font-weight: 700;
+    }
+    h1, h2, h3, p {
+      margin-top: 0;
+    }
+    h1 {
+      margin-bottom: 0;
+      font-size: 32px;
+      line-height: 1.2;
+    }
+    h2 {
+      margin-bottom: 16px;
+      font-size: 20px;
+    }
+    h3 {
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+    a {
+      color: #1677ff;
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .raw-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 0 18px;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      background: #fff;
+      white-space: nowrap;
+    }
+    .alert, .panel, .metric-card {
+      border: 1px solid #d7e3f8;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 8px 24px rgba(31, 41, 55, 0.05);
+    }
+    .alert {
+      margin-bottom: 16px;
+      padding: 18px 20px;
+      border-color: #fecaca;
+      background: #fff7f7;
+    }
+    .alert strong {
+      display: block;
+      margin-bottom: 8px;
+      color: #b42318;
+      font-size: 18px;
+    }
+    .alert p {
+      margin-bottom: 0;
+      color: #7f1d1d;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .metric-card {
+      min-height: 92px;
+      padding: 16px;
+    }
+    .metric-card span {
+      display: block;
+      margin-bottom: 10px;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .metric-card strong {
+      color: #0f172a;
+      font-size: 20px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .panel {
+      margin-bottom: 16px;
+      padding: 20px;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .meta-item {
+      padding: 14px;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .meta-item span {
+      display: block;
+      margin-bottom: 8px;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .meta-item strong {
+      word-break: break-word;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f8fafc;
+      color: #334155;
+      font-size: 13px;
+    }
+    td {
+      line-height: 1.55;
+      word-break: break-word;
+    }
+    tr:last-child td {
+      border-bottom: 0;
+    }
+    .muted {
+      margin-bottom: 0;
+      color: #64748b;
+    }
+    .log-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .log-list li {
+      display: grid;
+      grid-template-columns: 170px 82px minmax(0, 1fr);
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .log-list span {
+      color: #64748b;
+      font-size: 13px;
+    }
+    .log-list strong {
+      color: #1677ff;
+      font-size: 13px;
+    }
+    .log-list p {
+      margin: 0;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .artifact-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .artifact-card {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 14px;
+      padding: 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .screenshot {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      overflow: hidden;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .screenshot img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .screenshot.empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #94a3b8;
+    }
+    .artifact-card p {
+      color: #64748b;
+      line-height: 1.5;
+      word-break: break-all;
+    }
+    .artifact-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    details summary {
+      cursor: pointer;
+      color: #1677ff;
+      font-weight: 800;
+    }
+    pre {
+      overflow: auto;
+      max-height: 520px;
+      margin-bottom: 0;
+      padding: 14px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #dbeafe;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    @media (max-width: 900px) {
+      body {
+        padding: 18px;
+      }
+      .page-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .metric-grid,
+      .meta-grid,
+      .artifact-grid {
+        grid-template-columns: 1fr;
+      }
+      .artifact-card,
+      .log-list li {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="page-header">
+      <div>
+        <p>诊断摘要</p>
+        <h1>${escapeHtml(view.title)}</h1>
+      </div>
+      ${rawUrl ? `<a class="raw-link" href="${escapeHtml(rawUrl)}" target="_blank" rel="noopener">查看原始数据</a>` : ''}
+    </header>
+
+    <section class="alert">
+      <strong>${escapeHtml(view.failureType)}</strong>
+      <p>${escapeHtml(view.error)}</p>
+    </section>
+
+    <section class="metric-grid">
+      ${renderDiagnosticMetric('任务类型', view.taskLabel)}
+      ${renderDiagnosticMetric('当前阶段', view.phase)}
+      ${renderDiagnosticMetric('处理进度', view.percentText ? `${view.progressText}（${view.percentText}）` : view.progressText)}
+      ${renderDiagnosticMetric('耗时', view.duration)}
+    </section>
+
+    <section class="panel">
+      <h2>基本信息</h2>
+      <div class="meta-grid">
+        <div class="meta-item"><span>当前账号</span><strong>${escapeHtml(view.account)}</strong></div>
+        <div class="meta-item"><span>当前对象</span><strong>${escapeHtml(detailText)}</strong></div>
+        <div class="meta-item"><span>诊断生成时间</span><strong>${escapeHtml(view.generatedAt)}</strong></div>
+        <div class="meta-item"><span>开始时间</span><strong>${escapeHtml(view.startedAt)}</strong></div>
+        <div class="meta-item"><span>结束时间</span><strong>${escapeHtml(view.endedAt)}</strong></div>
+        <div class="meta-item"><span>诊断 ID</span><strong>${escapeHtml(view.id || '未记录')}</strong></div>
+      </div>
+    </section>
+
+    ${renderDiagnosticFailedItems(view)}
+    ${renderDiagnosticLogs(view.logs)}
+    ${renderDiagnosticArtifacts(view.artifacts)}
+
+    <section class="panel">
+      <details>
+        <summary>原始诊断数据</summary>
+        <pre>${escapeHtml(view.rawJson)}</pre>
+      </details>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
 async function handleRequest(request, response) {
   const url = new URL(request.url, `http://${request.headers.host || `${HOST}:${PORT}`}`);
 
@@ -1974,7 +2634,11 @@ async function handleRequest(request, response) {
       sendJson(response, 404, { error: '诊断包不存在。' });
       return;
     }
-    sendJson(response, 200, { diagnostic });
+    if (url.searchParams.get('format') === 'json') {
+      sendJson(response, 200, { diagnostic });
+      return;
+    }
+    sendHtml(response, renderDiagnosticPage(diagnostic));
     return;
   }
 

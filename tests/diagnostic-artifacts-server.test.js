@@ -26,4 +26,20 @@ assert.ok(
   'Diagnostic HTML and JSON artifacts should be served with readable content types.',
 );
 
+assert.ok(
+  serverSource.includes('function renderDiagnosticPage')
+    && serverSource.includes('function buildDiagnosticViewModel')
+    && serverSource.includes('诊断摘要')
+    && serverSource.includes('关键日志')
+    && serverSource.includes('页面截图')
+    && serverSource.includes('原始诊断数据'),
+  'Diagnostic route should render a readable summary page.',
+);
+
+assert.ok(
+  serverSource.includes("url.searchParams.get('format') === 'json'")
+    && serverSource.includes('sendHtml(response, renderDiagnosticPage(diagnostic));'),
+  'Diagnostic route should render HTML by default while keeping raw JSON available.',
+);
+
 console.log('diagnostic artifact server checks passed');
