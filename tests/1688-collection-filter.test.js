@@ -84,13 +84,19 @@ assert.ok(
   'Direct detail-link collection should be able to skip automatic price, score, exclusion and safe-mode filters.',
 );
 
-assert.strictEqual(DEFAULT_COLLECT_OPTIONS.count, 10, 'Default collection count should be 10.');
+assert.strictEqual(DEFAULT_COLLECT_OPTIONS.count, 1, 'Default collection count should be 1.');
+assert.strictEqual(DEFAULT_COLLECT_OPTIONS.dedupeWindowDays, 7, 'Default collection dedupe window should be 7 days.');
 assert.strictEqual(DEFAULT_COLLECT_OPTIONS.maxPriceCny, 10, 'Default max purchase price should be 10 CNY.');
 assert.deepStrictEqual(DEFAULT_COLLECT_OPTIONS.keywords, [], 'Default keywords should be empty.');
 assert.deepStrictEqual(DEFAULT_COLLECT_OPTIONS.preferredTerms, [], 'Default preferred terms should be empty.');
 assert.deepStrictEqual(DEFAULT_COLLECT_OPTIONS.excludedTerms, [], 'Default excluded terms should be empty.');
 assert.strictEqual(DEFAULT_COLLECT_OPTIONS.safeMode, false, 'Safe mode should be disabled by default.');
 assert.strictEqual(DEFAULT_COLLECT_OPTIONS.minScore, 50, 'Default minimum score should be 50.');
+assert.strictEqual(
+  Object.prototype.hasOwnProperty.call(DEFAULT_COLLECT_OPTIONS, 'use1688Login'),
+  false,
+  '1688 collection should not expose an automated browser login option.',
+);
 
 const amazonOptions = normalizeOptions({
   source: 'amazon',
@@ -164,8 +170,9 @@ assert.ok(
   collectScriptSource.includes("require('./lib/collection_dedupe_store')")
     && collectScriptSource.includes('filterRecentCollectionDuplicates')
     && collectScriptSource.includes('markCollectedItems')
-    && collectScriptSource.includes('跳过最近 7 天已采集商品'),
-  'Collection script should skip source products collected during the last 7 days and record successful collection results.',
+    && collectScriptSource.includes('windowDays: options.dedupeWindowDays')
+    && collectScriptSource.includes('跳过最近 ${options.dedupeWindowDays} 天已采集商品'),
+  'Collection script should skip source products collected during the configured dedupe window and record successful collection results.',
 );
 assert.ok(
   collectScriptSource.includes('extractAmazonProductDetail')
@@ -262,6 +269,12 @@ assert.strictEqual(
   'Search-result card prices should ignore shipping quantity promises and freight before the product price.',
 );
 
+assert.strictEqual(
+  parseSearchCardPrice('户外防晒帽女夏季遮阳帽 ¥2.69 已售2.9万件'),
+  2.69,
+  'Search-result card prices should accept visible currency prices followed by sales counts.',
+);
+
 assert.ok(
   Number.isNaN(parseSearchCardPrice('3000件以内 承诺48小时发货 库存199441盒')),
   'Search-result card prices should not fall back to quantity or stock numbers when no product price is visible.',
@@ -346,6 +359,39 @@ const detailOnlyCandidates = normalizeSearchCandidateRecords([
 assert.strictEqual(detailOnlyCandidates.length, 1, 'Non-product navigation and suggestion records should not consume candidate slots.');
 assert.strictEqual(detailOnlyCandidates[0].url, 'https://detail.1688.com/offer/923280275684.html');
 
+const noisySearchRecords = normalizeSearchCandidateRecords([
+  {
+    title: '国货品牌 OEM 欧美品牌 日韩品牌',
+    rawUrl: '',
+    metadataText: 'class=search-filter | object_type@offer^offerId@255779323',
+    sourceText: '国货品牌\nOEM\n欧美品牌\n日韩品牌',
+  },
+  {
+    title: '',
+    rawUrl: '',
+    metadataText: 'class=offer-card | data-offer-id="1031529452623"',
+    sourceText: `严选 现货rhode海莉有色Ras
+防水 镜面 欧美品牌
+¥
+2.5
+全网10万+件
+退货包运费 先采后付
+深圳市凡莱熙贸易有限公司`,
+  },
+], '口红', {
+  ...DEFAULT_COLLECT_OPTIONS,
+  maxCandidates: 1,
+});
+
+assert.strictEqual(
+  noisySearchRecords.length,
+  1,
+  'Search filter chips with offer-like tracking metadata should not be treated as product candidates.',
+);
+assert.strictEqual(noisySearchRecords[0].url, 'https://detail.1688.com/offer/1031529452623.html');
+assert.strictEqual(noisySearchRecords[0].price, 2.5);
+assert.match(noisySearchRecords[0].title, /rhode/, 'The visible priced product card should be kept.');
+
 const productTitleFromCardText = normalizeSearchCandidateRecords([
   {
     title: '江西犀瑞制造有限公司',
@@ -389,6 +435,13 @@ assert.deepStrictEqual(parsed.links, [
   'https://detail.1688.com/offer/923280275684.html',
   'https://detail.1688.com/offer/923280275685.html',
 ]);
+
+const dedupeWindowParsed = parseArgs([
+  '--keywords', '口红',
+  '--dedupe-days', '14',
+]);
+assert.strictEqual(dedupeWindowParsed.count, 1, 'CLI default collection count should be 1.');
+assert.strictEqual(dedupeWindowParsed.dedupeWindowDays, 14, 'CLI should accept a custom collection dedupe window.');
 assert.deepStrictEqual(
   normalizeSourceLinks('https://shopee.com.my/Sunscreen-Hat-i.123.456?sp_atk=abc'),
   ['https://shopee.com.my/Sunscreen-Hat-i.123.456'],
@@ -426,6 +479,19 @@ assert.strictEqual(
 assert.ok(
   collectScriptSource.includes('async function runShopeeCollection'),
   'Collection script should implement the Shopee automatic collection workflow.',
+);
+assert.ok(
+  !collectScriptSource.includes('function get1688LoginCredentials')
+    && !collectScriptSource.includes('async function ensure1688LoggedIn')
+    && !collectScriptSource.includes('async function waitFor1688LoginRecovery')
+    && !collectScriptSource.includes('await ensure1688LoggedIn(page, options)')
+    && !collectScriptSource.includes("'--1688-login'")
+    && !collectScriptSource.includes("'--collect-1688-login'"),
+  '1688 automatic collection should not contain automated browser login code.',
+);
+assert.ok(
+  !collectScriptSource.includes('page.waitForTimeout'),
+  '1688 collection should use the local sleep helper instead of Puppeteer page.waitForTimeout.',
 );
 assert.ok(
   collectScriptSource.includes('await assertShopeeSearchAccessible(page)'),

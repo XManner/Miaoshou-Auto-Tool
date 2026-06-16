@@ -73,16 +73,30 @@ assert.ok(
   'The home page should not show the task entry grid.',
 );
 assert.ok(
-  appSource.includes('功能概览')
-      && appSource.includes('选品到采集箱')
-      && appSource.includes('采集 1688 / Amazon 商品')
-      && appSource.includes('优化并发布商品信息')
-      && appSource.includes('自动设置限时秒杀'),
-  'The home page should explain the main automation functions.',
+  appSource.includes("currentPage === 'home'\" class=\"home-workbench\"")
+      && appSource.includes('当前运行')
+      && appSource.includes('今日概况')
+      && appSource.includes('home-quick-card')
+      && appSource.includes('home-record-card')
+      && appSource.includes('home-queue-card')
+      && !appSource.includes('<h2>功能概览</h2>'),
+  'The home page should present a compact operations workbench instead of the old overview copy.',
 );
 assert.ok(
   /@click="navigateToPage\('collect'\)"[\s\S]*@click="navigateToPage\('products'\)"[\s\S]*@click="navigateToPage\('flash'\)"/.test(appSource),
-  'The home overview should provide entry buttons for collection, editing, and flash-sale pages.',
+  'The home workbench should provide entry buttons for collection, editing, and flash-sale pages.',
+);
+const homeQuickSection = appSource.slice(
+  appSource.indexOf('<div class="home-quick-grid">'),
+  appSource.indexOf('<div class="home-main-grid">'),
+);
+assert.ok(
+  homeQuickSection
+    && !homeQuickSection.includes('加入队列')
+    && !homeQuickSection.includes('enqueueCollectRun')
+    && !homeQuickSection.includes('enqueueProductRun')
+    && !homeQuickSection.includes('enqueueFlashRun'),
+  'The home quick-entry cards should not show enqueue buttons.',
 );
 assert.ok(
   appSource.includes('class="soft-card task-card product-panel"'),

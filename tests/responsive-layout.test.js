@@ -49,8 +49,33 @@ assert.ok(
 );
 assert.ok(
   !appSource.includes("currentPage === 'home'\" class=\"home-grid\"")
-    && appSource.includes('home-history-panel'),
-  'The home page should only keep the recent history card.',
+    && appSource.includes("currentPage === 'home'\" class=\"home-workbench\"")
+    && appSource.includes('home-current-card')
+    && appSource.includes('home-quick-grid')
+    && appSource.includes('home-main-grid')
+    && appSource.includes('home-queue-card'),
+  'The home page should use the compact workbench layout with status, quick actions, history, and queue.',
+);
+assert.ok(
+  styles.includes('.home-quick-card > div > span')
+    && !styles.includes('.home-quick-card span {'),
+  'Home quick-card label styles should not override Ant Design button text.',
+);
+assert.ok(
+  styles.includes('.home-quick-card > .ant-btn')
+    && !styles.includes('.home-quick-card .ant-space'),
+  'Home quick cards should style the single direct entry button.',
+);
+assert.ok(
+  /\.home-status-grid,\s*\.home-quick-grid,\s*\.home-main-grid\s*\{[^}]*grid-template-columns:\s*repeat\(12,\s*minmax\(0,\s*1fr\)\);[^}]*gap:\s*var\(--home-gap\);/.test(styles)
+    && /\.home-current-card,\s*\.home-record-card\s*\{[^}]*grid-column:\s*span 8;/.test(styles)
+    && /\.home-summary-card,\s*\.home-side-stack\s*\{[^}]*grid-column:\s*span 4;/.test(styles)
+    && /\.home-quick-card\s*\{[^}]*grid-column:\s*span 4;/.test(styles),
+  'Home modules should share one 12-column grid so section gaps and edges align.',
+);
+assert.ok(
+  /\.home-main-grid\s*\{[^}]*align-items:\s*stretch;/.test(styles),
+  'Home recent-records card should stretch to align with the queue and key-log column bottom.',
 );
 assert.ok(
   styles.includes('.work-grid') && styles.includes('grid-template-columns: 1fr;'),

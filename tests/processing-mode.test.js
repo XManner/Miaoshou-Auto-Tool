@@ -107,6 +107,14 @@ assert.ok(
   'Medium radio button group should only round the right outside corners.',
 );
 assert.ok(
+  /\.medium-radio-group \.ant-radio-button-wrapper-checked:not\(\.ant-radio-button-wrapper-disabled\)\s*\{[\s\S]*?color:\s*#fff;/.test(styles),
+  'Selected medium radio buttons should use white text on the primary background.',
+);
+assert.ok(
+  /\.medium-radio-group \.ant-radio-button-wrapper-checked:not\(\.ant-radio-button-wrapper-disabled\) span\s*\{[\s\S]*?color:\s*#fff\s*!important;/.test(styles),
+  'Selected medium radio button labels should stay white even when nested text styles are present.',
+);
+assert.ok(
   !/@media \(max-width: 640px\)\s*\{[\s\S]*?\.medium-radio-group\s*\{\s*grid-template-columns:\s*1fr;\s*\}/.test(styles),
   'Medium radio button groups should stay side-by-side on narrow screens.',
 );

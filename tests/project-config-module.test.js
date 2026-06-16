@@ -28,7 +28,7 @@ const manager = projectConfig.createProjectConfigManager({ envPath, env: {} });
 
 assert.ok(
   Array.isArray(projectConfig.PROJECT_CONFIG_SCHEMA)
-    && projectConfig.PROJECT_CONFIG_SCHEMA.length >= 3,
+    && projectConfig.PROJECT_CONFIG_SCHEMA.length >= 2,
   'The project config schema should be exported from the config module.',
 );
 
@@ -56,6 +56,12 @@ const visibleSecretField = visibleConfig.sections
   .flatMap((section) => section.fields)
   .find((field) => field.key === 'DEEPSEEK_API_KEY');
 assert.strictEqual(visibleSecretField.value, 'sk-deepseek-secret', 'Local config values should be opt-in.');
+const allConfigFields = visibleConfig.sections.flatMap((section) => section.fields);
+assert.ok(
+  !allConfigFields.some((field) => /^ALI1688_LOGIN_/.test(field.key))
+    && typeof manager.getAli1688LoginConfig === 'undefined',
+  'Project config should not expose 1688 browser login credentials.',
+);
 
 const updates = manager.normalizeProjectConfig({
   values: {
@@ -79,5 +85,7 @@ assert.strictEqual(updates.AI_PROVIDER, 'kimi');
 assert.strictEqual(updates.MIAOSHOU_ACTIVE_ACCOUNT_INDEX, '1');
 assert.strictEqual(updates.MIAOSHOU_ACCOUNT_1, '13700137000');
 assert.strictEqual(updates.MIAOSHOU_APP_SECRET_2, '');
+assert.strictEqual(updates.ALI1688_LOGIN_ACCOUNT, undefined);
+assert.strictEqual(updates.ALI1688_LOGIN_PASSWORD, undefined);
 
 console.log('project config module checks passed');

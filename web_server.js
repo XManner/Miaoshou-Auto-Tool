@@ -11,7 +11,6 @@ const {
   readMiaoshouAccounts,
   serializeMiaoshouAccount,
   getDefaultMiaoshouAccount,
-  findMiaoshouAccount,
   getProjectConfig,
   normalizeProjectConfig,
   buildChildProcessEnv,
@@ -30,6 +29,28 @@ const {
 const {
   buildResumeRunInput,
 } = require('./lib/run_resume');
+const {
+  buildFailedItemRetryInput,
+} = require('./lib/run_failed_retry');
+const {
+  buildRunPrecheck,
+} = require('./lib/run_precheck');
+const {
+  failureTypeLabel,
+} = require('./lib/run_failure_classification');
+const {
+  createQueuedRun,
+  serializeQueue,
+  dequeueNext,
+  removeQueuedRun,
+  moveQueuedRun,
+  loadRunQueueState,
+  saveRunQueue,
+  clearRunQueueStore,
+} = require('./lib/run_queue');
+const {
+  buildRunStats,
+} = require('./lib/run_stats');
 const {
   artifactFilePath,
 } = require('./lib/automation_artifacts');
@@ -51,6 +72,7 @@ const ITEM_SELECTION_MODE_RANGE = 'range';
 const ITEM_SELECTION_MODE_ALL = 'all';
 const FLASH_SELECTION_MODE_COUNT = 'count';
 const FLASH_SELECTION_MODE_ALL = 'all';
+const FLASH_SELECTION_MODE_IDS = 'ids';
 const COLLECT_TASK_DEFAULT_KEYWORDS = '';
 const COLLECT_TASK_DEFAULT_PREFERRED_TERMS = '';
 const COLLECT_TASK_DEFAULT_EXCLUDED_TERMS = '';
@@ -122,6 +144,9 @@ function openBrowserForServer(url) {
 
 let currentRun = null;
 const history = loadRunHistory({ limit: MAX_HISTORY_ITEMS });
+const queueState = loadRunQueueState();
+const taskQueue = queueState.queue;
+let taskQueuePaused = true;
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -231,6 +256,52 @@ function readRequestJson(request) {
   });
 }
 
+function normalizeIdList(value = []) {
+  const raw = Array.isArray(value) ? value : String(value || '').split(/[\s,，、]+/);
+  return Array.from(new Set(raw.map((item) => String(item || '').trim()).filter(Boolean)));
+}
+
+function normalizeFlashActivityRecords(value = []) {
+  const raw = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+      const activityId = String(item.activityId || item.detailId || item.id || '').trim();
+      const activityTitle = String(item.activityTitle || item.title || item.name || '').trim();
+      if (!activityId && !activityTitle) {
+        return null;
+      }
+      return { activityId, activityTitle };
+    })
+    .filter((item) => {
+      if (!item) {
+        return false;
+      }
+      const key = item.activityId || item.activityTitle;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function resolveRunAccount(accountId = '') {
+  const accounts = readMiaoshouAccounts();
+  const normalizedAccountId = String(accountId || '').trim();
+  if (normalizedAccountId) {
+    const matched = accounts.find((account) => account && account.id === normalizedAccountId);
+    if (!matched) {
+      throw new Error('队列任务绑定的账号不存在或已被删除。');
+    }
+    return matched;
+  }
+  return getDefaultMiaoshouAccount(accounts);
+}
+
 function normalizeRunOptions(input = {}) {
   const rawTasks = input.tasks && typeof input.tasks === 'object' ? input.tasks : {};
   const collectRequested = Boolean(rawTasks.collect);
@@ -247,7 +318,7 @@ function normalizeRunOptions(input = {}) {
     throw new Error('商品采集任务需要单独执行。');
   }
 
-  const account = findMiaoshouAccount(String(input.accountId || '').trim());
+  const account = resolveRunAccount(input.accountId);
   if (!account) {
     throw new Error('没有找到可用的妙手账号配置。');
   }
@@ -263,8 +334,16 @@ function normalizeRunOptions(input = {}) {
     };
   }
 
+  const detailIds = tasks.edit ? normalizeIdList(input.detailIds) : [];
   const itemRange = tasks.edit
-    ? normalizeEditItemSelection(input)
+    ? (detailIds.length > 0
+      ? {
+        itemSelectionMode: ITEM_SELECTION_MODE_RANGE,
+        itemStartIndex: 1,
+        itemEndIndex: detailIds.length,
+        count: detailIds.length,
+      }
+      : normalizeEditItemSelection(input))
     : {
       itemSelectionMode: ITEM_SELECTION_MODE_RANGE,
       itemStartIndex: 0,
@@ -281,16 +360,25 @@ function normalizeRunOptions(input = {}) {
   const weightPaddingGrams = tasks.edit ? normalizeWeightPaddingGrams(input.weightPaddingGrams) : DEFAULT_WEIGHT_PADDING_GRAMS;
   const buyOneTakeOne = tasks.edit ? normalizeBooleanOption(input.buyOneTakeOne, false) : false;
 
-  const flashSelectionMode = tasks.flash ? normalizeFlashSelectionMode(input.flashSelectionMode) : FLASH_SELECTION_MODE_COUNT;
+  const flashActivityIds = tasks.flash ? normalizeIdList(input.flashActivityIds || input.activityIds) : [];
+  const skipFlashActivityIds = tasks.flash ? normalizeIdList(input.skipFlashActivityIds || input.skipActivityIds || input.processedFlashActivityIds) : [];
+  const processedFlashActivities = tasks.flash ? normalizeFlashActivityRecords(input.processedFlashActivities) : [];
+  const flashSelectionMode = tasks.flash && flashActivityIds.length > 0
+    ? FLASH_SELECTION_MODE_IDS
+    : (tasks.flash ? normalizeFlashSelectionMode(input.flashSelectionMode) : FLASH_SELECTION_MODE_COUNT);
   const flashCount = tasks.flash && flashSelectionMode === FLASH_SELECTION_MODE_COUNT
     ? Number.parseInt(input.flashCount, 10)
-    : 0;
+    : (flashSelectionMode === FLASH_SELECTION_MODE_IDS ? flashActivityIds.length : 0);
   if (tasks.flash && flashSelectionMode === FLASH_SELECTION_MODE_COUNT && (!Number.isFinite(flashCount) || flashCount < 1 || flashCount > 100)) {
     throw new Error('秒杀活动数量必须是 1 到 100 之间的整数。');
+  }
+  if (tasks.flash && flashSelectionMode === FLASH_SELECTION_MODE_IDS && flashActivityIds.length === 0) {
+    throw new Error('指定秒杀活动 ID 不能为空。');
   }
 
   return {
     count: itemRange.count,
+    detailIds,
     itemSelectionMode: itemRange.itemSelectionMode,
     itemStartIndex: itemRange.itemStartIndex,
     itemEndIndex: itemRange.itemEndIndex,
@@ -301,6 +389,10 @@ function normalizeRunOptions(input = {}) {
     buyOneTakeOne,
     flashSelectionMode,
     flashCount,
+    flashActivityIds,
+    skipFlashActivityIds,
+    processedFlashActivities,
+    retrySourceRunId: input.retrySourceRunId || '',
     tasks,
     account,
   };
@@ -384,13 +476,14 @@ function normalizeShopeeSite(value = 'my') {
 }
 
 function normalizeCollectOptions(input = {}) {
-  const collectCount = normalizeCollectInteger(input.collectCount || input.count, 10, 1, MAX_COLLECT_COUNT, '采集数量');
+  const collectCount = normalizeCollectInteger(input.collectCount || input.count, 1, 1, MAX_COLLECT_COUNT, '采集数量');
   const normalizedCollectSource = normalizeCollectSource(input.collectSource || input.source);
   const collectLinks = normalizeOptionalCollectText(input.collectLinks || input.links, '商品链接');
   const collectSource = collectLinks ? COLLECT_SOURCE_LINKS : normalizedCollectSource;
   return {
     count: collectCount,
     collectCount,
+    collectDedupeWindowDays: normalizeCollectInteger(input.collectDedupeWindowDays || input.dedupeWindowDays || input.dedupeDays, 7, 1, 365, '最近采集去重天数'),
     collectSource,
     collectAmazonMode: normalizeAmazonMode(input.collectAmazonMode || input.amazonMode, Boolean(collectLinks)),
     collectAmazonMarketplace: 'us',
@@ -535,7 +628,11 @@ function normalizeProcessingMode(value = PROCESSING_MODE_FAST) {
 }
 
 function normalizeFlashSelectionMode(value = FLASH_SELECTION_MODE_COUNT) {
-  return String(value || '').trim() === FLASH_SELECTION_MODE_ALL
+  const normalized = String(value || '').trim();
+  if (normalized === FLASH_SELECTION_MODE_IDS) {
+    return FLASH_SELECTION_MODE_IDS;
+  }
+  return normalized === FLASH_SELECTION_MODE_ALL
     ? FLASH_SELECTION_MODE_ALL
     : FLASH_SELECTION_MODE_COUNT;
 }
@@ -558,6 +655,9 @@ function formatItemRangeText(startIndex, endIndex) {
 }
 
 function formatItemSelectionText(selection = {}) {
+  if (Array.isArray(selection.detailIds) && selection.detailIds.length > 0) {
+    return `指定商品 ID ${selection.detailIds.length} 个`;
+  }
   if (normalizeItemSelectionMode(selection.itemSelectionMode) === ITEM_SELECTION_MODE_ALL) {
     return `全部商品（最多扫描 ${MAX_EDIT_ITEM_INDEX} 个）`;
   }
@@ -567,10 +667,154 @@ function formatItemSelectionText(selection = {}) {
 }
 
 function formatFlashSelectionText(selection = {}) {
+  if (Array.isArray(selection.flashActivityIds) && selection.flashActivityIds.length > 0) {
+    return `指定活动 ID ${selection.flashActivityIds.length} 个`;
+  }
   if (normalizeFlashSelectionMode(selection.flashSelectionMode) === FLASH_SELECTION_MODE_ALL) {
     return '全部进行中活动';
   }
   return `${selection.flashCount || 0} 个`;
+}
+
+function taskLabelForOptions(options = {}) {
+  const tasks = options.tasks || {};
+  if (tasks.collect) {
+    return `商品采集：${options.collectSource === COLLECT_SOURCE_LINKS ? '链接采集' : (options.collectSource || '1688')}，${options.collectCount || options.count || 0} 个`;
+  }
+  if (tasks.edit && tasks.flash) {
+    return `编辑商品并继续秒杀：${formatItemSelectionText(options)}，秒杀 ${formatFlashSelectionText(options)}`;
+  }
+  if (tasks.edit) {
+    return `编辑商品：${formatItemSelectionText(options)}`;
+  }
+  if (tasks.flash) {
+    return `秒杀管理：${formatFlashSelectionText(options)}`;
+  }
+  return '待执行任务';
+}
+
+function persistTaskQueue() {
+  saveRunQueue(taskQueue, { paused: taskQueuePaused });
+}
+
+function buildQueuedRunInput(options = {}) {
+  const { account, ...rest } = options;
+  const accountId = String((account && account.id) || rest.accountId || '').trim();
+  return accountId ? { ...rest, accountId } : rest;
+}
+
+function enqueueRunInput(input = {}, label = '') {
+  const options = normalizeRunOptions(input);
+  const item = createQueuedRun({
+    input: buildQueuedRunInput(options),
+    accountSnapshot: serializeMiaoshouAccount(options.account),
+    label: label || taskLabelForOptions(options),
+  });
+  taskQueue.push(item);
+  persistTaskQueue();
+  return item;
+}
+
+function startQueuedRun(item) {
+  if (!item || !item.input) {
+    return null;
+  }
+  const options = normalizeRunOptions(item.input);
+  const run = startRun(options);
+  run.queueLabel = item.label || '待执行任务';
+  run.queueAccount = item.accountSnapshot || null;
+  appendLog(run, 'system', `从任务队列开始：${item.label || '待执行任务'}。`);
+  return run;
+}
+
+function rememberQueuedRunStartFailure(item, error) {
+  const now = new Date().toISOString();
+  const input = item && item.input && typeof item.input === 'object' ? item.input : {};
+  const message = error && error.message ? error.message : String(error || '队列任务启动失败。');
+  const run = {
+    id: randomUUID(),
+    count: input.count || input.collectCount || input.flashCount || 0,
+    detailIds: input.detailIds || [],
+    itemSelectionMode: input.itemSelectionMode || ITEM_SELECTION_MODE_RANGE,
+    itemStartIndex: input.itemStartIndex || 0,
+    itemEndIndex: input.itemEndIndex || 0,
+    publish: Boolean(input.publish),
+    sourcePriceExtraCny: input.sourcePriceExtraCny || 0,
+    weightPaddingGrams: input.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS,
+    buyOneTakeOne: Boolean(input.buyOneTakeOne),
+    processingMode: input.processingMode || PROCESSING_MODE_FAST,
+    flashCount: input.flashCount || 0,
+    flashSelectionMode: input.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
+    flashActivityIds: input.flashActivityIds || [],
+    skipFlashActivityIds: input.skipFlashActivityIds || [],
+    processedFlashActivities: input.processedFlashActivities || [],
+    collectCount: input.collectCount || 0,
+    collectDedupeWindowDays: input.collectDedupeWindowDays || 7,
+    collectSource: input.collectSource || '',
+    collectKeywords: input.collectKeywords || '',
+    collectLinks: input.collectLinks || '',
+    tasks: input.tasks || {},
+    account: item ? item.accountSnapshot : null,
+    command: `任务队列：${item && item.label ? item.label : '待执行任务'}`,
+    status: 'error',
+    startedAt: now,
+    endedAt: now,
+    durationMs: 0,
+    exitCode: null,
+    signal: null,
+    error: message,
+    summary: null,
+    progress: {
+      phase: 'queue',
+      phaseLabel: '队列启动失败',
+      completed: 0,
+      total: input.count || input.collectCount || input.flashCount || 0,
+      totalCount: input.count || input.collectCount || input.flashCount || 0,
+      detailId: '',
+      detailName: '',
+      overallPercent: 0,
+      updatedAt: now,
+    },
+    stdout: '',
+    stderr: message,
+    stderrLineBuffer: '',
+    logs: [],
+    captcha: null,
+    child: null,
+  };
+  appendLog(run, 'stderr', `队列任务启动失败：${message}`);
+  rememberRun(run);
+  return run;
+}
+
+function runNextQueuedRunNow() {
+  if (taskQueuePaused || isRunActive(currentRun) || taskQueue.length === 0) {
+    return null;
+  }
+  const next = dequeueNext(taskQueue);
+  taskQueue.splice(0, taskQueue.length, ...next.queue);
+  persistTaskQueue();
+  try {
+    return startQueuedRun(next.item);
+  } catch (error) {
+    return rememberQueuedRunStartFailure(next.item, error);
+  }
+}
+
+function scheduleNextQueuedRun() {
+  if (taskQueue.length === 0) {
+    if (!taskQueuePaused && !isRunActive(currentRun)) {
+      taskQueuePaused = true;
+      persistTaskQueue();
+    }
+    return;
+  }
+  if (taskQueuePaused || isRunActive(currentRun)) {
+    return;
+  }
+  setTimeout(() => {
+    runNextQueuedRunNow();
+  }, 0);
 }
 
 function appendLog(run, stream, text) {
@@ -604,7 +848,8 @@ function formatRunStatusLog(run) {
   const total = Number.isFinite(Number(progress.total)) ? Number(progress.total) : 0;
   const completed = Number.isFinite(Number(progress.completed)) ? Number(progress.completed) : 0;
   const countText = total > 0 ? `，已完成 ${completed}/${total}` : '';
-  const detailText = progress.detailId ? `，当前商品 ${progress.detailId}` : '';
+  const detailValue = progress.detailName || progress.detailId;
+  const detailText = detailValue ? `，当前对象 ${detailValue}` : '';
 
   return `当前正在：${phaseLabel}，进度 ${percent}%${countText}${detailText}。`;
 }
@@ -619,7 +864,25 @@ function progressLogKey(progress = {}) {
     Number.isFinite(Number(progress.completed)) ? Number(progress.completed) : 0,
     Number.isFinite(Number(progress.total)) ? Number(progress.total) : 0,
     progress.detailId || '',
+    progress.detailName || '',
   ].join('|');
+}
+
+function appendProcessedFlashActivity(run, event = {}) {
+  if (!run || !event.processedActivity) {
+    return;
+  }
+  const activityId = String(event.activityId || event.detailId || '').trim();
+  const activityTitle = String(event.activityTitle || event.detailName || '').trim();
+  if (!activityId && !activityTitle) {
+    return;
+  }
+  const list = Array.isArray(run.processedFlashActivities) ? run.processedFlashActivities : [];
+  const key = activityId || activityTitle;
+  if (!list.some((item) => item && (item.activityId || item.activityTitle) === key)) {
+    list.push({ activityId, activityTitle });
+  }
+  run.processedFlashActivities = list;
 }
 
 function appendProgressLogIfChanged(run) {
@@ -666,9 +929,12 @@ function updateRunProgress(run, event = {}) {
     total,
     totalCount: Number.isFinite(Number(event.totalCount)) ? Number(event.totalCount) : run.progress.totalCount,
     detailId: event.detailId ? String(event.detailId) : run.progress.detailId,
+    detailName: event.detailName ? String(event.detailName) : run.progress.detailName,
     overallPercent,
     updatedAt: new Date().toISOString(),
   };
+
+  appendProcessedFlashActivity(run, event);
 
   if (event.captcha && event.captcha.id) {
     const imageFile = safeCaptchaName(event.captcha.imageFile || '');
@@ -958,7 +1224,10 @@ function serializeRun(run) {
     id: run.id,
     status: run.status,
     command: run.command,
+    queueLabel: run.queueLabel || '',
+    queueAccount: run.queueAccount || null,
     count: run.count,
+    detailIds: run.detailIds || [],
     itemSelectionMode: run.itemSelectionMode || ITEM_SELECTION_MODE_RANGE,
     itemStartIndex: run.itemStartIndex || 0,
     itemEndIndex: run.itemEndIndex || 0,
@@ -969,7 +1238,12 @@ function serializeRun(run) {
     processingMode: run.processingMode,
     flashCount: run.flashCount,
     flashSelectionMode: run.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
+    flashActivityIds: run.flashActivityIds || [],
+    skipFlashActivityIds: run.skipFlashActivityIds || [],
+    processedFlashActivities: run.processedFlashActivities || [],
+    retrySourceRunId: run.retrySourceRunId || '',
     collectCount: run.collectCount,
+    collectDedupeWindowDays: run.collectDedupeWindowDays,
     collectSource: run.collectSource,
     collectAmazonMode: run.collectAmazonMode,
     collectAmazonMarketplace: run.collectAmazonMarketplace,
@@ -994,6 +1268,7 @@ function serializeRun(run) {
     signal: run.signal,
     error: maskPhoneText(run.error),
     summary: run.summary,
+    detailName: run.progress.detailName || '',
     progress: run.progress,
     account: run.account,
     captcha: run.captcha || null,
@@ -1036,6 +1311,7 @@ function rememberRun(run) {
     command: run.command,
     count: run.count,
     itemSelectionMode: run.itemSelectionMode || ITEM_SELECTION_MODE_RANGE,
+    detailIds: run.detailIds || [],
     itemStartIndex: run.itemStartIndex || 0,
     itemEndIndex: run.itemEndIndex || 0,
     publish: run.publish,
@@ -1045,6 +1321,10 @@ function rememberRun(run) {
     processingMode: run.processingMode,
     flashCount: run.flashCount,
     flashSelectionMode: run.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
+    flashActivityIds: run.flashActivityIds || [],
+    skipFlashActivityIds: run.skipFlashActivityIds || [],
+    processedFlashActivities: run.processedFlashActivities || [],
+    retrySourceRunId: run.retrySourceRunId || '',
     collectCount: run.collectCount,
     collectSource: run.collectSource,
     collectAmazonMode: run.collectAmazonMode,
@@ -1070,35 +1350,49 @@ function rememberRun(run) {
     signal: run.signal,
     summary: run.summary,
     error: maskPhoneText(run.error),
+    detailName: run.progress.detailName || '',
     account: run.account,
     progress: run.progress,
     diagnosticId: diagnostic ? diagnostic.id : '',
     diagnosticFailureType: diagnostic ? diagnostic.failureType : '',
+    diagnosticFailureText: diagnostic ? failureTypeLabel(diagnostic.failureType) : '',
   });
 
   if (history.length > MAX_HISTORY_ITEMS) {
     history.splice(MAX_HISTORY_ITEMS);
   }
   saveRunHistory(history, { limit: MAX_HISTORY_ITEMS });
+  scheduleNextQueuedRun();
 }
 
 function startFlashOnlyRun(options) {
   ensureCaptchaDir();
   const accountSummary = serializeMiaoshouAccount(options.account);
-  const flashArgs = options.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? ['--all'] : ['--count', String(options.flashCount)];
+  const flashArgs = options.flashSelectionMode === FLASH_SELECTION_MODE_IDS
+    ? ['--activity-ids', (options.flashActivityIds || []).join(',')]
+    : (options.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? ['--all'] : ['--count', String(options.flashCount)]);
+  if (Array.isArray(options.skipFlashActivityIds) && options.skipFlashActivityIds.length > 0) {
+    flashArgs.push('--skip-activity-ids', options.skipFlashActivityIds.join(','));
+  }
   const args = [
     FLASH_SCRIPT_PATH,
     ...flashArgs,
   ];
-  const command = options.flashSelectionMode === FLASH_SELECTION_MODE_ALL
-    ? 'node miaoshou_flash_sale.js --all'
-    : `node miaoshou_flash_sale.js --count ${options.flashCount}`;
+  const command = options.flashSelectionMode === FLASH_SELECTION_MODE_IDS
+    ? `node miaoshou_flash_sale.js --activity-ids ${(options.flashActivityIds || []).join(',')}`
+    : (options.flashSelectionMode === FLASH_SELECTION_MODE_ALL
+      ? 'node miaoshou_flash_sale.js --all'
+      : `node miaoshou_flash_sale.js --count ${options.flashCount}`);
   const run = {
     id: randomUUID(),
     count: 0,
     publish: false,
     flashCount: options.flashCount,
     flashSelectionMode: options.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
+    flashActivityIds: options.flashActivityIds || [],
+    skipFlashActivityIds: options.skipFlashActivityIds || [],
+    processedFlashActivities: options.processedFlashActivities || [],
+    retrySourceRunId: options.retrySourceRunId || '',
     tasks: options.tasks,
     account: accountSummary,
     command,
@@ -1117,6 +1411,7 @@ function startFlashOnlyRun(options) {
       total: options.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? 0 : options.flashCount,
       totalCount: options.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? 0 : options.flashCount,
       detailId: '',
+      detailName: '',
       overallPercent: 0,
       updatedAt: new Date().toISOString(),
     },
@@ -1130,6 +1425,9 @@ function startFlashOnlyRun(options) {
 
   appendLog(run, 'system', `已选择账号：${accountSummary ? accountSummary.label : '当前账号'}`);
   appendLog(run, 'system', `计划处理秒杀活动：${formatFlashSelectionText(run)}。`);
+  if (run.skipFlashActivityIds.length > 0) {
+    appendLog(run, 'system', `继续秒杀将跳过已处理活动 ${run.skipFlashActivityIds.length} 个。`);
+  }
   appendLog(run, 'system', '开始执行秒杀活动自动化。');
 
   const child = spawn(process.execPath, args, {
@@ -1247,6 +1545,8 @@ function startCollectRun(options) {
     options.collectKeywords,
     '--count',
     String(options.collectCount),
+    '--dedupe-days',
+    String(options.collectDedupeWindowDays),
     '--max-price',
     String(options.collectMaxPriceCny),
     '--preferred-terms',
@@ -1262,11 +1562,12 @@ function startCollectRun(options) {
     '--links',
     options.collectLinks,
   ];
-  const command = `node miaoshou_1688_collect.js --source ${options.collectSource} --amazon-mode ${options.collectAmazonMode} --amazon-marketplace ${options.collectAmazonMarketplace} --amazon-max-price-usd ${options.collectAmazonMaxPriceUsd} --amazon-min-rating ${options.collectAmazonMinRating} --amazon-min-review-count ${options.collectAmazonMinReviewCount} --shopee-site ${options.collectShopeeSite} --shopee-max-price ${options.collectShopeeMaxPrice} --shopee-max-moq ${options.collectShopeeMaxMoq} --keywords ${JSON.stringify(options.collectKeywords)} --count ${options.collectCount} --max-price ${options.collectMaxPriceCny} --preferred-terms ${JSON.stringify(options.collectPreferredTerms)} --excluded-terms ${JSON.stringify(options.collectExcludedTerms)} --min-score ${options.collectMinScore} --safe-mode ${options.collectSafeMode} --skip-filters ${options.collectSkipFilters} --links ${JSON.stringify(options.collectLinks || '')}`;
+  const command = `node miaoshou_1688_collect.js --source ${options.collectSource} --amazon-mode ${options.collectAmazonMode} --amazon-marketplace ${options.collectAmazonMarketplace} --amazon-max-price-usd ${options.collectAmazonMaxPriceUsd} --amazon-min-rating ${options.collectAmazonMinRating} --amazon-min-review-count ${options.collectAmazonMinReviewCount} --shopee-site ${options.collectShopeeSite} --shopee-max-price ${options.collectShopeeMaxPrice} --shopee-max-moq ${options.collectShopeeMaxMoq} --keywords ${JSON.stringify(options.collectKeywords)} --count ${options.collectCount} --dedupe-days ${options.collectDedupeWindowDays} --max-price ${options.collectMaxPriceCny} --preferred-terms ${JSON.stringify(options.collectPreferredTerms)} --excluded-terms ${JSON.stringify(options.collectExcludedTerms)} --min-score ${options.collectMinScore} --safe-mode ${options.collectSafeMode} --skip-filters ${options.collectSkipFilters} --links ${JSON.stringify(options.collectLinks || '')}`;
   const run = {
     id: randomUUID(),
     count: options.collectCount,
     collectCount: options.collectCount,
+    collectDedupeWindowDays: options.collectDedupeWindowDays,
     collectKeywords: options.collectKeywords,
     collectSource: options.collectSource,
     collectAmazonMode: options.collectAmazonMode,
@@ -1335,6 +1636,7 @@ function startCollectRun(options) {
   if (options.collectSource === COLLECT_SOURCE_SHOPEE) {
     appendLog(run, 'system', `Shopee 最高展示价 ${options.collectShopeeMaxPrice}，1688 最大起批量 ${options.collectShopeeMaxMoq}。`);
   }
+  appendLog(run, 'system', `最近 ${options.collectDedupeWindowDays} 天已采集商品会自动跳过。`);
   if (options.collectSource !== COLLECT_SOURCE_AMAZON && options.collectSource !== COLLECT_SOURCE_LINKS) {
     appendLog(run, 'system', `安全模式：${options.collectSafeMode ? '开启' : '关闭'}。`);
   }
@@ -1428,6 +1730,9 @@ function startCollectRun(options) {
 
 function startChainedFlashRun(run, account) {
   const flashArgs = run.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? ['--all'] : ['--count', String(run.flashCount)];
+  if (Array.isArray(run.skipFlashActivityIds) && run.skipFlashActivityIds.length > 0) {
+    flashArgs.push('--skip-activity-ids', run.skipFlashActivityIds.join(','));
+  }
   const args = [
     FLASH_SCRIPT_PATH,
     ...flashArgs,
@@ -1598,11 +1903,18 @@ function startRun(options) {
     '--buy-one-take-one',
     options.buyOneTakeOne ? 'true' : 'false',
   ];
+  if (Array.isArray(options.detailIds) && options.detailIds.length > 0) {
+    args.push('--detail-ids', options.detailIds.join(','));
+  }
   const itemSelectionMode = normalizeItemSelectionMode(options.itemSelectionMode);
-  const command = `node miaoshou_auto.js --count ${options.count} --item-selection-mode ${itemSelectionMode} --item-start-index ${options.itemStartIndex || 1} --item-end-index ${options.itemEndIndex || options.count || 1} --publish ${options.publish ? 'true' : 'false'} --source-price-extra ${options.sourcePriceExtraCny || 0} --weight-padding-grams ${options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS} --buy-one-take-one ${options.buyOneTakeOne ? 'true' : 'false'}`;
+  const detailIdsCommand = Array.isArray(options.detailIds) && options.detailIds.length > 0
+    ? ` --detail-ids ${options.detailIds.join(',')}`
+    : '';
+  const command = `node miaoshou_auto.js --count ${options.count} --item-selection-mode ${itemSelectionMode} --item-start-index ${options.itemStartIndex || 1} --item-end-index ${options.itemEndIndex || options.count || 1} --publish ${options.publish ? 'true' : 'false'} --source-price-extra ${options.sourcePriceExtraCny || 0} --weight-padding-grams ${options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS} --buy-one-take-one ${options.buyOneTakeOne ? 'true' : 'false'}${detailIdsCommand}`;
   const run = {
     id: randomUUID(),
     count: options.count,
+    detailIds: options.detailIds || [],
     itemSelectionMode,
     itemStartIndex: itemSelectionMode === ITEM_SELECTION_MODE_ALL ? 0 : (options.itemStartIndex || 1),
     itemEndIndex: itemSelectionMode === ITEM_SELECTION_MODE_ALL ? 0 : (options.itemEndIndex || options.count || 1),
@@ -1612,6 +1924,10 @@ function startRun(options) {
     buyOneTakeOne: Boolean(options.buyOneTakeOne),
     flashCount: options.flashCount,
     flashSelectionMode: options.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
+    flashActivityIds: options.flashActivityIds || [],
+    skipFlashActivityIds: options.skipFlashActivityIds || [],
+    processedFlashActivities: options.processedFlashActivities || [],
+    retrySourceRunId: options.retrySourceRunId || '',
     tasks: options.tasks || { edit: true, flash: false },
     account: accountSummary,
     command,
@@ -1631,6 +1947,7 @@ function startRun(options) {
       total: options.count,
       totalCount: options.count,
       detailId: '',
+      detailName: '',
       overallPercent: 0,
       updatedAt: new Date().toISOString(),
     },
@@ -1981,16 +2298,7 @@ function diagnosticStatusLabel(status = '') {
 }
 
 function diagnosticFailureTypeLabel(type = '') {
-  const labels = {
-    timeout: '页面超时',
-    captcha: '需要验证码',
-    login: '登录异常',
-    network: '网络或接口异常',
-    selector: '页面元素未找到',
-    stopped: '手动停止',
-    unknown: '未知问题',
-  };
-  return labels[String(type || '')] || String(type || '未知问题');
+  return failureTypeLabel(String(type || 'unknown'));
 }
 
 function diagnosticTaskLabel(tasks = {}) {
@@ -2610,6 +2918,9 @@ async function handleRequest(request, response) {
       capabilities: buildServerCapabilities(),
       currentRun: serializeRun(currentRun),
       history,
+      queue: serializeQueue(taskQueue),
+      queuePaused: taskQueuePaused,
+      stats: buildRunStats(history),
     });
     return;
   }
@@ -2691,6 +3002,127 @@ async function handleRequest(request, response) {
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/run/enqueue') {
+    try {
+      const body = await readRequestJson(request);
+      const item = enqueueRunInput(body);
+      sendJson(response, 202, {
+        queued: item ? item.id : '',
+        queue: serializeQueue(taskQueue),
+        currentRun: serializeRun(currentRun),
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: error.message || String(error) });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/queue/remove') {
+    try {
+      const body = await readRequestJson(request);
+      const result = removeQueuedRun(taskQueue, body.id);
+      if (!result.removed) {
+        sendJson(response, 404, { error: '未找到排队任务。' });
+        return;
+      }
+      taskQueue.splice(0, taskQueue.length, ...result.queue);
+      persistTaskQueue();
+      sendJson(response, 200, {
+        removed: result.removed.id,
+        queue: serializeQueue(taskQueue),
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: error.message || String(error) });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/queue/move') {
+    try {
+      const body = await readRequestJson(request);
+      const result = moveQueuedRun(taskQueue, body.id, body.direction);
+      if (!result.moved) {
+        sendJson(response, 400, { error: '这个排队任务不能移动。' });
+        return;
+      }
+      taskQueue.splice(0, taskQueue.length, ...result.queue);
+      persistTaskQueue();
+      sendJson(response, 200, {
+        moved: result.moved.id,
+        queue: serializeQueue(taskQueue),
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: error.message || String(error) });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/queue/start') {
+    try {
+      if (taskQueue.length === 0 && !isRunActive(currentRun)) {
+        taskQueuePaused = true;
+        persistTaskQueue();
+        sendJson(response, 200, {
+          started: false,
+          queuePaused: taskQueuePaused,
+          queue: serializeQueue(taskQueue),
+          currentRun: serializeRun(currentRun),
+        });
+        return;
+      }
+      taskQueuePaused = false;
+      persistTaskQueue();
+      const run = runNextQueuedRunNow();
+      sendJson(response, 200, {
+        started: Boolean(run && run.status === 'running'),
+        queuePaused: taskQueuePaused,
+        queue: serializeQueue(taskQueue),
+        currentRun: serializeRun(currentRun),
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: error.message || String(error) });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/queue/pause') {
+    try {
+      const body = await readRequestJson(request);
+      taskQueuePaused = Boolean(body.paused);
+      persistTaskQueue();
+      if (!taskQueuePaused) {
+        scheduleNextQueuedRun();
+      }
+      sendJson(response, 200, {
+        queuePaused: taskQueuePaused,
+        queue: serializeQueue(taskQueue),
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: error.message || String(error) });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/queue/clear') {
+    taskQueue.splice(0, taskQueue.length);
+    taskQueuePaused = true;
+    clearRunQueueStore();
+    sendJson(response, 200, { queue: serializeQueue(taskQueue), queuePaused: taskQueuePaused });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/run/precheck') {
+    try {
+      const body = await readRequestJson(request);
+      const options = normalizeRunOptions(body);
+      const result = buildRunPrecheck({ options, account: options.account });
+      sendJson(response, 200, { precheck: result });
+    } catch (error) {
+      sendJson(response, 400, { error: error.message || String(error) });
+    }
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/run/resume') {
     try {
       if (isRunActive(currentRun)) {
@@ -2706,11 +3138,41 @@ async function handleRequest(request, response) {
         return;
       }
 
-      const resumeInput = buildResumeRunInput(sourceRun);
+      const diagnostic = loadRunDiagnostic(runId);
+      const resumeSourceRun = diagnostic && Array.isArray(diagnostic.logs)
+        ? { ...sourceRun, logs: diagnostic.logs }
+        : sourceRun;
+      const resumeInput = buildResumeRunInput(resumeSourceRun);
       const options = normalizeRunOptions(resumeInput);
       const run = startRun(options);
       appendLog(run, 'system', `从历史任务 ${runId} 续跑。`);
       sendJson(response, 202, { run: serializeRun(run), resumeInput });
+    } catch (error) {
+      sendJson(response, 400, { error: error.message || String(error) });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/run/retry-failed') {
+    try {
+      if (isRunActive(currentRun)) {
+        sendJson(response, 409, { error: '当前已有任务正在运行。' });
+        return;
+      }
+
+      const body = await readRequestJson(request);
+      const runId = String(body.id || body.runId || '').trim();
+      const sourceRun = history.find((item) => item && item.id === runId);
+      if (!sourceRun) {
+        sendJson(response, 404, { error: '没有找到可重跑的历史任务。' });
+        return;
+      }
+
+      const retryInput = buildFailedItemRetryInput(sourceRun);
+      const options = normalizeRunOptions(retryInput);
+      const run = startRun(options);
+      appendLog(run, 'system', `从历史任务 ${runId} 重跑失败项。`);
+      sendJson(response, 202, { run: serializeRun(run), retryInput });
     } catch (error) {
       sendJson(response, 400, { error: error.message || String(error) });
     }

@@ -6678,6 +6678,7 @@ function summarizeCollectBoxItems(data) {
 // 简单命令行参数解析，支持 search / find-category / set-category 三种命令。
 async function runDefaultEditWorkflow({
   count = 1,
+  detailIds = [],
   itemSelectionMode = 'range',
   itemStartIndex,
   itemEndIndex,
@@ -6689,6 +6690,7 @@ async function runDefaultEditWorkflow({
   buyOneTakeOne = false,
   onProgress = null,
 } = {}) {
+  const normalizedDetailIds = uniqueIdList(detailIds);
   const selectionMode = normalizeItemSelectionMode(itemSelectionMode);
   const searchParams = buildDefaultEditSearchParams({
     itemSelectionMode: selectionMode,
@@ -6696,10 +6698,13 @@ async function runDefaultEditWorkflow({
     itemEndIndex,
     count,
   });
+  if (normalizedDetailIds.length > 0) {
+    searchParams.detailIds = normalizedDetailIds;
+  }
   const itemRange = selectionMode === 'range'
     ? normalizeItemRangeSelection({ startIndex: itemStartIndex, endIndex: itemEndIndex, count })
     : null;
-  const resolvedCount = itemRange ? itemRange.count : 0;
+  const resolvedCount = normalizedDetailIds.length > 0 ? normalizedDetailIds.length : (itemRange ? itemRange.count : 0);
   const parsedPublish = parseBooleanOrNull(publish);
   const publishEnabled = parsedPublish === null ? true : parsedPublish;
   const normalizedSourceSite = String(sourceSite || DEFAULT_WORKFLOW_SOURCE_SITE).toUpperCase();
@@ -6730,6 +6735,7 @@ async function runDefaultEditWorkflow({
     mode: 'default-edit-workflow',
     params: {
       count: selectionMode === 'all' ? result.totalCount : resolvedCount,
+      detailIds: normalizedDetailIds,
       itemSelectionMode: selectionMode,
       itemStartIndex: itemRange ? itemRange.startIndex : null,
       itemEndIndex: itemRange ? itemRange.endIndex : null,
@@ -6774,6 +6780,7 @@ async function main() {
   if (args.command === 'run-default' || args.command === 'run' || args.command === 'auto') {
     const result = await runDefaultEditWorkflow({
       count: args.count,
+      detailIds: args.detailIds,
       itemSelectionMode: args.itemSelectionMode,
       itemStartIndex: args.itemStartIndex,
       itemEndIndex: args.itemEndIndex,

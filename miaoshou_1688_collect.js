@@ -103,7 +103,8 @@ const DEFAULT_COLLECT_OPTIONS = {
   shopeeMaxPrice: 10000,
   shopeeMaxMoq: 3,
   keywords: DEFAULT_KEYWORDS,
-  count: 10,
+  count: 1,
+  dedupeWindowDays: DEFAULT_DEDUPE_WINDOW_DAYS,
   maxPriceCny: 10,
   preferredTerms: DEFAULT_PREFERRED_TERMS,
   excludedTerms: DEFAULT_EXCLUDED_TERMS,
@@ -240,11 +241,20 @@ function normalizeOptions(input = {}) {
       label: '1688 最大起批量',
     })),
     keywords,
-    count: Math.round(normalizeNumber(input.count, DEFAULT_COLLECT_OPTIONS.count, {
+    count: Math.round(normalizeNumber(input.count || input.collectCount, DEFAULT_COLLECT_OPTIONS.count, {
       min: 1,
       max: 100,
       label: '采集数量',
     })),
+    dedupeWindowDays: Math.round(normalizeNumber(
+      input.dedupeWindowDays || input.collectDedupeWindowDays || input.dedupeDays,
+      DEFAULT_COLLECT_OPTIONS.dedupeWindowDays,
+      {
+        min: 1,
+        max: 365,
+        label: '最近采集去重天数',
+      },
+    )),
     maxPriceCny: normalizeNumber(input.maxPriceCny, DEFAULT_COLLECT_OPTIONS.maxPriceCny, {
       min: 0.01,
       max: 10000,
@@ -329,6 +339,11 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
     if (arg === '--count') {
       input.count = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--dedupe-days' || arg === '--dedupe-window-days' || arg === '--collect-dedupe-window-days') {
+      input.dedupeWindowDays = next;
       index += 1;
       continue;
     }
@@ -1479,6 +1494,12 @@ function isDetailOfferUrl(value = '') {
   }
 }
 
+function isFreightPriceContext(text = '', start = 0) {
+  const rawText = String(text || '');
+  const before = rawText.slice(Math.max(0, start - 32), start);
+  return /(?:运费|邮费|快递费|配送费|shipping|freight|postage|delivery)\s*$/i.test(before);
+}
+
 function parseSearchCardPrice(value) {
   const text = String(value || '').replace(/,/g, '');
   const normalizedCurrencyText = text
@@ -1492,7 +1513,7 @@ function parseSearchCardPrice(value) {
       price !== null
       && price >= 0.01
       && price <= 100000
-      && !isSuspiciousProductPriceContext(normalizedCurrencyText, currencyMatch.index, matchEnd)
+      && !isFreightPriceContext(normalizedCurrencyText, currencyMatch.index, matchEnd)
     ) {
       return price;
     }
@@ -1658,7 +1679,13 @@ function normalizeSearchCandidateRecords(records = [], keyword = '', rawOptions 
       };
     })
     .filter((item) => {
-      if (!item.title || !isDetailOfferUrl(item.url) || seen.has(item.url)) {
+      if (!item.title || !isDetailOfferUrl(item.url)) {
+        return false;
+      }
+      if (!Number.isFinite(parsePrice(item.price))) {
+        return false;
+      }
+      if (seen.has(item.url)) {
         return false;
       }
       seen.add(item.url);
@@ -2444,25 +2471,27 @@ function compactCollectionItem(item = {}) {
   };
 }
 
-function filterRecentlyCollectedCandidates(candidates = [], source = COLLECT_SOURCE_1688) {
+function filterRecentlyCollectedCandidates(candidates = [], source = COLLECT_SOURCE_1688, rawOptions = DEFAULT_COLLECT_OPTIONS) {
+  const options = normalizeOptions(rawOptions);
   const { accepted, duplicates } = filterRecentCollectionDuplicates(candidates, {
     source,
-    windowDays: DEFAULT_DEDUPE_WINDOW_DAYS,
+    windowDays: options.dedupeWindowDays,
   });
   for (const duplicate of duplicates) {
     const label = duplicate.title || duplicate.asin || duplicate.url || duplicate.dedupeKey || '未知商品';
-    log(`跳过最近 7 天已采集商品：${label}；${duplicate.reason}`);
+    log(`跳过最近 ${options.dedupeWindowDays} 天已采集商品：${label}；${duplicate.reason}`);
   }
   return { accepted, duplicates };
 }
 
-function rememberCollectedItems(items = [], source = COLLECT_SOURCE_1688) {
+function rememberCollectedItems(items = [], source = COLLECT_SOURCE_1688, rawOptions = DEFAULT_COLLECT_OPTIONS) {
+  const options = normalizeOptions(rawOptions);
   const records = markCollectedItems(items, {
     source,
-    windowDays: DEFAULT_DEDUPE_WINDOW_DAYS,
+    windowDays: options.dedupeWindowDays,
   });
   if (records.length > 0) {
-    log(`已记录 ${records.length} 个成功采集商品，最近 ${DEFAULT_DEDUPE_WINDOW_DAYS} 天再次采集会自动跳过。`);
+    log(`已记录 ${records.length} 个成功采集商品，最近 ${options.dedupeWindowDays} 天再次采集会自动跳过。`);
   }
   return records;
 }
@@ -2515,6 +2544,7 @@ async function runShopeeCollection(options) {
       const shopeeDedupe = filterRecentlyCollectedCandidates(
         await extractShopeeCandidates(page, keyword, options),
         COLLECT_SOURCE_SHOPEE,
+        options,
       );
       duplicates.push(...shopeeDedupe.duplicates);
       const shopeeCandidates = shopeeDedupe.accepted;
@@ -2579,7 +2609,7 @@ async function runShopeeCollection(options) {
             platformCollectBoxDetailIdMap: collectResult.platformCollectBoxDetailIdMap,
           };
           collected.push(resultItem);
-          rememberCollectedItems([resultItem], COLLECT_SOURCE_SHOPEE);
+          rememberCollectedItems([resultItem], COLLECT_SOURCE_SHOPEE, options);
           log(`采集成功：${shopeeCandidate.title}；1688 同款 ${matched.source.title}。`);
           emitProgress({
             phase: 'collect',
@@ -2636,6 +2666,7 @@ async function runShopeeCollection(options) {
         maxPriceCny: options.maxPriceCny,
         minScore: options.minScore,
         safeMode: options.safeMode,
+        dedupeWindowDays: options.dedupeWindowDays,
       },
       results: [
         ...collected.map(compactCollectionItem),
@@ -2797,7 +2828,7 @@ async function runLinkCollection(options) {
     keyword: '商品链接',
     reason: '商品链接输入',
   }));
-  const sourceDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_LINKS);
+  const sourceDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_LINKS, options);
   duplicates.push(...sourceDedupe.duplicates);
   const candidatesToCollect = sourceDedupe.accepted.slice(0, options.count);
 
@@ -2831,7 +2862,7 @@ async function runLinkCollection(options) {
           platformCollectBoxDetailIdMap: collectResult.platformCollectBoxDetailIdMap,
         });
       }
-      rememberCollectedItems(collected, COLLECT_SOURCE_LINKS);
+      rememberCollectedItems(collected, COLLECT_SOURCE_LINKS, options);
       log(`商品链接批量采集成功：${collected.length}/${candidatesToCollect.length} 个商品已认领到 TikTok 采集箱。`);
     } catch (error) {
       if (isMiaoshouServiceUnavailableError(error)) {
@@ -2876,6 +2907,7 @@ async function runLinkCollection(options) {
     params: {
       source: options.source,
       links: options.links,
+      dedupeWindowDays: options.dedupeWindowDays,
     },
     results: [
       ...collected.map(compactCollectionItem),
@@ -2899,7 +2931,7 @@ async function runAmazonCollection(options) {
     ...options,
     count: detailCandidateLimit,
   });
-  const amazonDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_AMAZON);
+  const amazonDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_AMAZON, options);
   duplicates.push(...amazonDedupe.duplicates);
   const enrichedCandidates = await enrichAmazonCandidatesWithDetails(
     amazonDedupe.accepted.slice(0, detailCandidateLimit),
@@ -2960,7 +2992,7 @@ async function runAmazonCollection(options) {
         };
         collected.push(resultItem);
       }
-      rememberCollectedItems(collected, COLLECT_SOURCE_AMAZON);
+      rememberCollectedItems(collected, COLLECT_SOURCE_AMAZON, options);
       log(`Amazon 商品批量采集成功：${collected.length}/${candidatesToCollect.length} 个商品已认领到 TikTok 采集箱。`);
     } catch (error) {
       if (isMiaoshouServiceUnavailableError(error)) {
@@ -3012,6 +3044,7 @@ async function runAmazonCollection(options) {
       amazonMinRating: options.amazonMinRating,
       amazonMinReviewCount: options.amazonMinReviewCount,
       excludedTerms: options.excludedTerms,
+      dedupeWindowDays: options.dedupeWindowDays,
     },
     results: [
       ...collected.map(compactCollectionItem),
@@ -3094,7 +3127,7 @@ async function runCollection(options) {
           log(`关键词 ${keyword} 找到候选商品 ${searchCandidates.length} 个。`);
           return searchCandidates;
         })();
-      const sourceDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_1688);
+      const sourceDedupe = filterRecentlyCollectedCandidates(candidates, COLLECT_SOURCE_1688, options);
       duplicates.push(...sourceDedupe.duplicates);
 
       for (const candidate of sourceDedupe.accepted) {
@@ -3149,7 +3182,7 @@ async function runCollection(options) {
           };
           if (collectResult.status === 'success') {
             collected.push(resultItem);
-            rememberCollectedItems([resultItem], COLLECT_SOURCE_1688);
+            rememberCollectedItems([resultItem], COLLECT_SOURCE_1688, options);
           } else {
             failed.push({ ...resultItem, error: collectResult.message });
             log(`商品采集失败：${detailCandidate.title || detailCandidate.url}；${collectResult.message}`);
@@ -3208,6 +3241,7 @@ async function runCollection(options) {
         minScore: options.minScore,
         safeMode: options.safeMode,
         links: options.links,
+        dedupeWindowDays: options.dedupeWindowDays,
       },
       results: [
         ...collected.map(compactCollectionItem),

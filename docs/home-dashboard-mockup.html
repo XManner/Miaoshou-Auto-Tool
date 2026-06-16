@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>首页工作台效果图</title>
+  <style>
+    :root {
+      --bg: #eef3ff;
+      --card: #fff;
+      --line: #dfe6f5;
+      --text: #18223d;
+      --muted: #7f889b;
+      --blue: #1677ff;
+      --blue-soft: #eaf3ff;
+      --green: #15a56a;
+      --red: #e44b4b;
+      --orange: #f59e0b;
+      --shadow: 0 18px 50px rgba(42, 59, 100, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #f7f9ff 0%, var(--bg) 100%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    .frame {
+      width: 1440px;
+      margin: 0 auto;
+      padding: 28px 36px 42px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 64px;
+      padding: 0 24px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 10px 30px rgba(42, 59, 100, 0.08);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-weight: 800;
+      font-size: 20px;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: var(--blue);
+      box-shadow: inset 0 -8px 18px rgba(0, 0, 0, 0.12);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .nav span {
+      padding: 9px 15px;
+      border-radius: 10px;
+    }
+
+    .nav .active {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .account {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .account strong {
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 330px;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .status-card,
+    .account-card,
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .status-card {
+      padding: 24px;
+    }
+
+    .status-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      color: var(--text);
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin-top: 7px;
+      font-size: 30px;
+      line-height: 1.18;
+    }
+
+    .status-summary {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 0 12px;
+      border-radius: 999px;
+      color: var(--green);
+      background: #eaf8f2;
+      font-weight: 800;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 104px;
+      height: 40px;
+      padding: 0 16px;
+      border: 1px solid #cfd8ea;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 750;
+    }
+
+    .button.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(22, 119, 255, 0.22);
+    }
+
+    .progress-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .metric {
+      min-height: 86px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdff;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 10px;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .bar-wrap {
+      margin-top: 18px;
+    }
+
+    .bar-head {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .bar {
+      height: 9px;
+      border-radius: 999px;
+      background: #edf1f8;
+      overflow: hidden;
+    }
+
+    .bar div {
+      width: 48%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--blue);
+    }
+
+    .account-card {
+      padding: 22px;
+    }
+
+    .account-card h2 {
+      margin-top: 8px;
+      font-size: 26px;
+    }
+
+    .account-card p {
+      margin: 10px 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .mini-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .mini-stat {
+      padding: 12px;
+      border-radius: 12px;
+      background: #f6f9ff;
+    }
+
+    .mini-stat span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .mini-stat strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 20px;
+    }
+
+    .quick-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .quick-card {
+      min-height: 132px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--card);
+      box-shadow: 0 12px 32px rgba(42, 59, 100, 0.08);
+    }
+
+    .quick-card h3 {
+      margin-top: 8px;
+      font-size: 20px;
+    }
+
+    .quick-card p {
+      min-height: 44px;
+      margin: 9px 0 16px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .quick-actions .button {
+      min-width: 84px;
+      height: 34px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 390px;
+      gap: 16px;
+      margin-top: 16px;
+      align-items: start;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .card-header h2 {
+      font-size: 20px;
+    }
+
+    .card-body {
+      padding: 18px 20px 20px;
+    }
+
+    .task-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .task-table th,
+    .task-table td {
+      padding: 14px 12px;
+      border-bottom: 1px solid #edf1f8;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    .task-table th {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      background: #fafcff;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 62px;
+      height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .tag.success {
+      color: var(--green);
+      background: #eaf8f2;
+    }
+
+    .tag.error {
+      color: var(--red);
+      background: #fff0f0;
+    }
+
+    .tag.warning {
+      color: var(--orange);
+      background: #fff7df;
+    }
+
+    .link {
+      color: var(--blue);
+      font-weight: 800;
+    }
+
+    .queue-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .queue-item {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdff;
+    }
+
+    .queue-item.active {
+      border-color: #a9ccff;
+      background: #f1f7ff;
+    }
+
+    .queue-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .queue-meta {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .queue-controls {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .queue-controls .button {
+      min-width: 78px;
+      height: 34px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .current-log {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+      padding: 14px;
+      border-radius: 12px;
+      background: #f8fbff;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <header class="topbar">
+      <div class="brand"><div class="brand-mark"></div><span>妙手自动化工作台</span></div>
+      <nav class="nav">
+        <span class="active">首页</span>
+        <span>商品采集</span>
+        <span>编辑商品</span>
+        <span>秒杀管理</span>
+        <span>账户配置</span>
+      </nav>
+      <div class="account"><span>当前账号</span><strong>166****8880</strong></div>
+    </header>
+
+    <section class="hero">
+      <div class="status-card">
+        <div class="status-head">
+          <div>
+            <div class="eyebrow">当前运行</div>
+            <h1>正在编辑商品：SWEET MINT 唇冻唇釉</h1>
+            <div class="status-summary">
+              <span class="status-pill">运行中</span>
+              <span>精细模式 · 不发布 · 单 SKU 添加买一送一规格</span>
+            </div>
+          </div>
+          <div class="button-row">
+            <div class="button">查看日志</div>
+            <div class="button">停止</div>
+          </div>
+        </div>
+        <div class="progress-grid">
+          <div class="metric"><span>总数</span><strong>30</strong></div>
+          <div class="metric"><span>成功</span><strong>14</strong></div>
+          <div class="metric"><span>失败</span><strong>1</strong></div>
+          <div class="metric"><span>用时</span><strong>18分42秒</strong></div>
+        </div>
+        <div class="bar-wrap">
+          <div class="bar-head"><span>总进度 14 / 30</span><span>48%</span></div>
+          <div class="bar"><div></div></div>
+        </div>
+      </div>
+
+      <aside class="account-card">
+        <div class="eyebrow">今日概况</div>
+        <h2>任务工作台</h2>
+        <p>首页优先显示当前任务、队列和最近结果，不再把大段功能说明放在第一屏。</p>
+        <div class="mini-stats">
+          <div class="mini-stat"><span>今日任务</span><strong>12</strong></div>
+          <div class="mini-stat"><span>成功率</span><strong>86%</strong></div>
+          <div class="mini-stat"><span>队列待执行</span><strong>4</strong></div>
+          <div class="mini-stat"><span>失败待处理</span><strong>2</strong></div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="quick-grid">
+      <article class="quick-card">
+        <div class="eyebrow">采集</div>
+        <h3>商品采集</h3>
+        <p>关键词或商品链接采集，默认采集 1 个，可配置最近采集去重天数。</p>
+        <div class="quick-actions"><div class="button primary">进入配置</div><div class="button">加入队列</div></div>
+      </article>
+      <article class="quick-card">
+        <div class="eyebrow">编辑</div>
+        <h3>编辑商品</h3>
+        <p>处理采集箱商品，支持精细模式、加价、重量加重和买一送一规格。</p>
+        <div class="quick-actions"><div class="button primary">进入配置</div><div class="button">加入队列</div></div>
+      </article>
+      <article class="quick-card">
+        <div class="eyebrow">促销</div>
+        <h3>秒杀管理</h3>
+        <p>处理进行中的秒杀活动，继续任务时跳过已处理活动。</p>
+        <div class="quick-actions"><div class="button primary">进入配置</div><div class="button">加入队列</div></div>
+      </article>
+    </section>
+
+    <section class="main-grid">
+      <div class="card">
+        <div class="card-header">
+          <h2>最近记录</h2>
+          <div class="button-row"><div class="button">全部记录</div><div class="button">失败优先</div></div>
+        </div>
+        <div class="card-body">
+          <table class="task-table">
+            <thead>
+              <tr>
+                <th>状态</th>
+                <th>任务</th>
+                <th>结果</th>
+                <th>时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="tag error">失败</span></td>
+                <td>编辑商品：全部商品，最多扫描 500 个</td>
+                <td>成功 18，失败 2</td>
+                <td>2026/6/16 18:08</td>
+                <td><span class="link">重跑失败项</span></td>
+              </tr>
+              <tr>
+                <td><span class="tag success">成功</span></td>
+                <td>商品采集：1688，1 个</td>
+                <td>成功 1，跳过 0</td>
+                <td>2026/6/16 18:01</td>
+                <td><span class="link">诊断</span></td>
+              </tr>
+              <tr>
+                <td><span class="tag warning">已停止</span></td>
+                <td>秒杀管理：全部进行中活动</td>
+                <td>已处理 12 个活动</td>
+                <td>2026/6/16 15:08</td>
+                <td><span class="link">继续</span></td>
+              </tr>
+              <tr>
+                <td><span class="tag success">成功</span></td>
+                <td>编辑商品并继续秒杀：第 1-10 个商品</td>
+                <td>编辑 10，秒杀 3</td>
+                <td>2026/6/16 14:42</td>
+                <td><span class="link">查看</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="current-log">
+            <div>关键日志：当前正在处理第 15 个商品，已保存商品信息，准备进入下一项。</div>
+            <div>最近错误：1 个商品图片审核失败，已进入失败项，可单独重跑。</div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="card">
+        <div class="card-header">
+          <h2>任务队列</h2>
+          <div class="button primary">开始队列</div>
+        </div>
+        <div class="card-body">
+          <div class="queue-list">
+            <div class="queue-item active">
+              <div class="queue-title"><span>1. 编辑商品：全部商品</span><span class="tag warning">运行中</span></div>
+              <div class="queue-meta">账号：166****8880 · 精细模式 · 最多扫描 500 个</div>
+              <div class="queue-controls"><div class="button">日志</div><div class="button">停止</div></div>
+            </div>
+            <div class="queue-item">
+              <div class="queue-title"><span>2. 商品采集：1688</span><span class="tag">等待</span></div>
+              <div class="queue-meta">采集 1 个 · 去重 7 天 · 关键词：口红</div>
+              <div class="queue-controls"><div class="button">上移</div><div class="button">取消</div></div>
+            </div>
+            <div class="queue-item">
+              <div class="queue-title"><span>3. 秒杀管理：全部活动</span><span class="tag">等待</span></div>
+              <div class="queue-meta">完成后跳过历史已处理活动</div>
+              <div class="queue-controls"><div class="button">上移</div><div class="button">取消</div></div>
+            </div>
+            <div class="queue-item">
+              <div class="queue-title"><span>4. 编辑商品：第 31-60 个</span><span class="tag">等待</span></div>
+              <div class="queue-meta">账号：130****5707 · 快速模式 · 不发布</div>
+              <div class="queue-controls"><div class="button">上移</div><div class="button">取消</div></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </div>
+</body>
+</html>

@@ -40,10 +40,15 @@ assert.ok(
   '文案翻译 / SKU 属性翻译模型',
   '图片审核模型',
   '重量识别和估算模型',
-  '功能模型配置',
+  '默认使用模型',
 ].forEach((text) => {
   assert.ok(combinedSource.includes(text), `Config page should include ${text}.`);
 });
+assert.ok(
+  !combinedSource.includes("title: '功能模型配置'")
+    && !appSource.includes('功能模型配置'),
+  'Feature model configuration should no longer be a separate tab.',
+);
 
 assert.ok(
   appSource.includes('<a-select')
@@ -72,7 +77,7 @@ assert.ok(
 
 assert.ok(
   appSource.includes('aiUsageItems')
-    && appSource.includes('AI 功能使用说明')
+    && appSource.includes('AI 功能说明')
     && appSource.includes('ai-usage-panel'),
   'Config page should explain which AI service is used by each feature.',
 );
@@ -86,10 +91,12 @@ assert.ok(
 );
 
 assert.ok(
-  !appSource.includes('visibleConfigSections')
-    && !appSource.includes('usageFieldOnly')
-    && !appSource.includes('ai-usage-model-select'),
-  'Per-feature AI model selectors should render as their own config section, not inside the usage panel.',
+  appSource.includes('configRenderableGroups')
+    && appSource.includes('section.groups')
+    && appSource.includes('config-field-group')
+    && configSource.includes("key: 'defaultModels'")
+    && configSource.includes("title: '默认使用模型'"),
+  'Per-feature AI model selectors should render as the first grouped area inside AI model service.',
 );
 
 assert.ok(
@@ -142,6 +149,14 @@ assert.ok(
 });
 
 assert.ok(
+  !combinedSource.includes('ALI1688_LOGIN_ACCOUNT')
+    && !combinedSource.includes('ALI1688_LOGIN_PASSWORD')
+    && !combinedSource.includes('1688 登录账号')
+    && !combinedSource.includes('1688 登录密码'),
+  'Config page should not show 1688 browser login settings.',
+);
+
+assert.ok(
   !appSource.includes(`<a-input
                                     v-model:value="account.loginPhone"`)
     && !appSource.includes(`<a-input
@@ -159,7 +174,6 @@ assert.ok(
 assert.ok(
   !combinedSource.includes(oldLookupKey)
     && !combinedSource.includes(oldLookupLabel)
-    && !combinedSource.includes('1688 采集')
     && !combinedSource.includes('Chrome 路径')
     && !combinedSource.includes('Puppeteer Chrome 路径')
     && !combinedSource.includes('CHROME_EXECUTABLE_PATH')
@@ -217,7 +231,7 @@ assert.strictEqual(
 );
 
 assert.ok(
-  appSource.includes('<a-card v-if="currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
+  appSource.includes('<a-card v-if="currentPage !== \'home\' && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
   'The config page should not show the shared recent task history panel.',
 );
 
@@ -227,6 +241,7 @@ assert.ok(
     && styles.includes('.config-field-label')
     && styles.includes('.config-field-status')
     && styles.includes('.config-toolbar')
+    && styles.includes('.config-field-group')
     && styles.includes('.ai-usage-panel'),
   'The config page should have scoped layout styles.',
 );

@@ -19,6 +19,7 @@ temp/
 .captcha/
 .miaoshou-browser/
 .run-history.json
+.run-queue.json
 .collection-dedupe.json
 .diagnostics/
 

@@ -15,6 +15,7 @@ const DEFAULT_BROWSER_WINDOW_WIDTH = 1600;
 const DEFAULT_BROWSER_WINDOW_HEIGHT = 1100;
 const FLASH_SELECTION_MODE_COUNT = 'count';
 const FLASH_SELECTION_MODE_ALL = 'all';
+const FLASH_SELECTION_MODE_IDS = 'ids';
 const ADD_PRODUCT_EXCLUSION_FILTER_LABELS = [
   '隐藏已参与限时秒杀的产品',
   '隐藏已参与本次活动的产品',
@@ -24,6 +25,8 @@ function parseArgs(argv = process.argv.slice(2)) {
   const args = {
     count: 1,
     flashSelectionMode: FLASH_SELECTION_MODE_COUNT,
+    activityIds: [],
+    skipActivityIds: [],
     headless: false,
   };
 
@@ -40,6 +43,24 @@ function parseArgs(argv = process.argv.slice(2)) {
       args.count = 0;
       continue;
     }
+    if (arg === '--activity-ids') {
+      args.activityIds = String(argv[index + 1] || '')
+        .split(/[\s,，、]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      args.flashSelectionMode = FLASH_SELECTION_MODE_IDS;
+      args.count = args.activityIds.length;
+      index += 1;
+      continue;
+    }
+    if (arg === '--skip-activity-ids') {
+      args.skipActivityIds = String(argv[index + 1] || '')
+        .split(/[\s,，、]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      index += 1;
+      continue;
+    }
     if (arg === '--headless') {
       args.headless = argv[index + 1] === 'true';
       index += 1;
@@ -49,6 +70,9 @@ function parseArgs(argv = process.argv.slice(2)) {
 
   if (args.flashSelectionMode === FLASH_SELECTION_MODE_COUNT && (!Number.isFinite(args.count) || args.count < 1 || args.count > 100)) {
     throw new Error('秒杀活动数量必须是 1 到 100 之间的整数。');
+  }
+  if (args.flashSelectionMode === FLASH_SELECTION_MODE_IDS && args.activityIds.length === 0) {
+    throw new Error('指定秒杀活动 ID 不能为空。');
   }
 
   return args;
@@ -1207,7 +1231,8 @@ async function selectActivityListPageSize100(page) {
   }
 
   const finalState = await readCurrentPageSize();
-  throw new Error(`没有确认活动列表分页已切换到 100 条/页，当前识别为：${finalState.text || '未识别'}`);
+  log(`秒杀活动列表分页未切换到 100 条/页，当前识别为：${finalState.text || '未识别'}；将继续处理当前可见活动。`);
+  return false;
 }
 
 async function findFlashSaleListPage(browser) {
@@ -1419,39 +1444,125 @@ async function scrollActivityListForMoreRows(page) {
   return state;
 }
 
-async function collectRunningActivityQueue(page, expectedCount = null) {
+async function getVisibleActivityListSignature(page) {
+  const rows = await readActivityRows(page).catch(() => []);
+  return rows.map((row) => row.text).join('|');
+}
+
+async function clickNextActivityListPage(page) {
+  const beforeSignature = await getVisibleActivityListSignature(page);
+  const clicked = await page.evaluate(() => {
+    const isVisible = (element) => {
+      if (!element || !element.getClientRects().length) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0
+        && rect.height > 0
+        && style.visibility !== 'hidden'
+        && style.display !== 'none';
+    };
+    const normalize = (value) => String(value || '').replace(/\s+/g, '').trim();
+    const isDisabled = (element) => {
+      if (!element) return true;
+      const disabledText = `${element.getAttribute?.('aria-disabled') || ''} ${element.getAttribute?.('disabled') || ''} ${element.className || ''}`;
+      return element.disabled === true || /true|disabled|is-disabled/.test(String(disabledText).toLowerCase());
+    };
+    const entries = Array.from(document.querySelectorAll('button, [role=button], li, a, span, div'))
+      .filter((element) => !element.closest('[role=dialog], .jx-dialog, .el-dialog'))
+      .filter(isVisible)
+      .map((element) => {
+        const target = element.closest?.('button, [role=button], li, a, .ant-pagination-next, .el-pagination .btn-next, .btn-next, [class*=next], [class*=Next]')
+          || element;
+        const marker = [
+          normalize(element.innerText || element.textContent || ''),
+          normalize(element.getAttribute?.('aria-label') || ''),
+          normalize(element.getAttribute?.('title') || ''),
+          String(element.className || ''),
+          String(target.className || ''),
+        ].join(' ');
+        const rect = target.getBoundingClientRect();
+        return { element: target, marker, rect };
+      })
+      .filter((entry) => /下一页|next|right|chevron-right|arrow-right|pager-next|pagination-next|btn-next/i.test(entry.marker))
+      .filter((entry) => !isDisabled(entry.element))
+      .sort((a, b) => b.rect.bottom - a.rect.bottom || b.rect.right - a.rect.right);
+
+    const next = entries[0];
+    if (!next) return false;
+    next.element.scrollIntoView({ block: 'center', inline: 'center' });
+    next.element.click();
+    return true;
+  });
+
+  if (!clicked) {
+    return false;
+  }
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await sleep(800);
+    const currentSignature = await getVisibleActivityListSignature(page);
+    if (currentSignature && currentSignature !== beforeSignature) {
+      return true;
+    }
+  }
+
+  return true;
+}
+
+async function collectRunningActivityQueue(page, expectedCount = null, options = {}) {
+  const allowPagination = Boolean(options.allowPagination);
   const seenActivityKeys = new Set();
   const queue = [];
-  let lastCollectedCount = 0;
-  let stagnantCount = 0;
+  let pageNumber = 1;
 
   await resetActivityListScroll(page);
 
-  for (let attempt = 0; attempt < 160; attempt += 1) {
-    const rows = await readActivityRows(page);
-    const newActivities = getUniqueActivityRows(rows, seenActivityKeys);
-    if (newActivities.length > 0) {
-      queue.push(...newActivities);
-      log(`已收集进行中的秒杀活动：${queue.length} 个。`);
-      if (Number.isFinite(expectedCount) && expectedCount > 0 && queue.length >= expectedCount) {
+  for (let pageAttempt = 0; pageAttempt < 50; pageAttempt += 1) {
+    let lastCollectedCount = queue.length;
+    let stagnantCount = 0;
+
+    for (let attempt = 0; attempt < 160; attempt += 1) {
+      const rows = await readActivityRows(page);
+      const newActivities = getUniqueActivityRows(rows, seenActivityKeys);
+      if (newActivities.length > 0) {
+        queue.push(...newActivities);
+        log(`已收集进行中的秒杀活动：${queue.length} 个。`);
+        if (Number.isFinite(expectedCount) && expectedCount > 0 && queue.length >= expectedCount) {
+          break;
+        }
+      }
+
+      const scrollState = await scrollActivityListForMoreRows(page);
+      if (!scrollState.moved && scrollState.atBottom) {
         break;
+      }
+
+      if (queue.length === lastCollectedCount) {
+        stagnantCount += 1;
+        if (stagnantCount >= 5) {
+          break;
+        }
+      } else {
+        stagnantCount = 0;
+        lastCollectedCount = queue.length;
       }
     }
 
-    const scrollState = await scrollActivityListForMoreRows(page);
-    if (!scrollState.moved && scrollState.atBottom) {
+    if (Number.isFinite(expectedCount) && expectedCount > 0 && queue.length >= expectedCount) {
       break;
     }
 
-    if (queue.length === lastCollectedCount) {
-      stagnantCount += 1;
-      if (stagnantCount >= 5) {
-        break;
-      }
-    } else {
-      stagnantCount = 0;
-      lastCollectedCount = queue.length;
+    if (!allowPagination) {
+      break;
     }
+
+    const movedToNextPage = await clickNextActivityListPage(page);
+    if (!movedToNextPage) {
+      break;
+    }
+    pageNumber += 1;
+    log(`已切换到秒杀活动列表第 ${pageNumber} 页，继续收集活动ID。`);
+    await resetActivityListScroll(page);
   }
 
   if (Number.isFinite(expectedCount) && expectedCount > 0 && queue.length < expectedCount) {
@@ -3544,6 +3655,7 @@ async function processActivity(browser, listPage, activity, runState) {
     total: runState.total,
     totalCount: runState.total,
     detailId: activity.id,
+    detailName: activity.title,
     overallPercent: Math.round((runState.completed / runState.total) * 100),
   });
 
@@ -3660,6 +3772,7 @@ async function run() {
   let browser = null;
   const results = [];
   const processedActivityKeys = new Set();
+  args.skipActivityIds.forEach((activityId) => processedActivityKeys.add(normalizeText(activityId)));
   const runState = {
     completed: 0,
     total: args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? 0 : args.count,
@@ -3698,14 +3811,30 @@ async function run() {
     await listPage.goto(FLASH_SALE_URL, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT });
     await waitForFlashSaleListReady(listPage, DEFAULT_TIMEOUT);
     const runningState = await clickRunningTab(listPage);
-    await selectActivityListPageSize100(listPage);
-    const allRunningActivities = await collectRunningActivityQueue(listPage, runningState.count);
+    const activityListPageSizeReady = await selectActivityListPageSize100(listPage);
+    const allRunningActivities = await collectRunningActivityQueue(listPage, runningState.count, { allowPagination: !activityListPageSizeReady });
     if (allRunningActivities.length === 0) {
       throw new Error('没有找到进行中的秒杀活动。');
     }
-    const activityQueue = args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? allRunningActivities : allRunningActivities.slice(0, args.count);
-    const requestedText = args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? '全部进行中活动' : `${args.count} 个`;
-    log(`已确认本页共获取 ${allRunningActivities.length} 个进行中活动，本次计划处理 ${requestedText}，实际队列 ${activityQueue.length} 个。`);
+    const candidateRunningActivities = allRunningActivities.filter((item) => !hasProcessedActivity(processedActivityKeys, item.activity));
+    const activityQueue = args.flashSelectionMode === FLASH_SELECTION_MODE_IDS
+      ? args.activityIds.map((activityId) => {
+        const matched = candidateRunningActivities.find((item) => String(item.activity && item.activity.id) === String(activityId));
+        if (!matched) {
+          return null;
+        }
+        return matched;
+      }).filter(Boolean)
+      : (args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? candidateRunningActivities : candidateRunningActivities.slice(0, args.count));
+    if (args.flashSelectionMode === FLASH_SELECTION_MODE_IDS && activityQueue.length !== args.activityIds.length) {
+      const foundIds = new Set(activityQueue.map((item) => String(item.activity && item.activity.id)));
+      const missingIds = args.activityIds.filter((id) => !foundIds.has(String(id)));
+      throw new Error(`没有找到指定秒杀活动：${missingIds.join('、')}`);
+    }
+    const requestedText = args.flashSelectionMode === FLASH_SELECTION_MODE_IDS
+      ? `指定活动 ${args.activityIds.length} 个`
+      : (args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? '全部进行中活动' : `${args.count} 个`);
+    log(`已确认本页共获取 ${allRunningActivities.length} 个进行中活动，已跳过处理过的活动 ${args.skipActivityIds.length} 个，本次计划处理 ${requestedText}，实际队列 ${activityQueue.length} 个。`);
     runState.total = activityQueue.length;
     emitProgress({
       phase: 'flash',
@@ -3751,6 +3880,8 @@ async function run() {
         total: runState.total,
         totalCount: runState.total,
         detailId: progressResult && progressResult.activityId,
+        detailName: progressResult && progressResult.activityTitle,
+        processedActivity: true,
         overallPercent: Math.round((runState.completed / runState.total) * 100),
       });
     }

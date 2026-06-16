@@ -10,13 +10,14 @@ assert.ok(
 );
 
 assert.ok(
-  /const hasVisibleHistory = computed\(\(\) => visibleHistory\.value\.length > 0\);/.test(appSource),
-  'The shared recent task history panel should use the filtered history for empty and clear states.',
+  /const filteredVisibleHistory = computed\(\(\) => \([\s\S]*visibleHistory\.value\.filter\(\(run\) => historyStatusMatches\(run, historyStatusFilter\.value\)\)[\s\S]*\)\);/.test(appSource)
+    && /const hasVisibleHistory = computed\(\(\) => filteredVisibleHistory\.value\.length > 0\);/.test(appSource),
+  'The shared recent task history panel should apply the status filter before empty and clear states.',
 );
 
 assert.ok(
-  appSource.includes('<a-list :data-source="visibleHistory" :locale="{ emptyText: \'暂无记录\' }"'),
-  'The shared recent task history list should render the page-filtered history.',
+  appSource.includes('<a-list :data-source="filteredVisibleHistory" :locale="{ emptyText: \'暂无记录\' }"'),
+  'The shared recent task history list should render the page and status filtered history.',
 );
 
 assert.ok(

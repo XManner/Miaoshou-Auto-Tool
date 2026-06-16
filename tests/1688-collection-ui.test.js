@@ -35,6 +35,10 @@ assert.ok(
   'The UI should define a collection form.',
 );
 assert.ok(
+  !appSource.includes('use1688Login'),
+  'Collection UI should not expose 1688 browser login because automated 1688 login is unreliable.',
+);
+assert.ok(
   appSource.includes("keywords: ''"),
   'Collection keywords should default to empty.',
 );
@@ -57,8 +61,12 @@ assert.ok(
   'Collection page should hide Shopee automatic collection settings until the workflow is implemented.',
 );
 assert.ok(
-  appSource.includes('collectCount: 10') || appSource.includes('count: 10'),
-  'Collection count should default to 10.',
+  appSource.includes('count: 1'),
+  'Collection count should default to 1.',
+);
+assert.ok(
+  appSource.includes('dedupeWindowDays: 7'),
+  'Collection dedupe window should default to 7 days.',
 );
 assert.ok(
   appSource.includes('maxPriceCny: 10'),
@@ -112,8 +120,9 @@ assert.ok(
     && appSource.includes('collectAmazonMinReviewCount: Math.max(0, Number(collectForm.amazonMinReviewCount || 0))')
     && appSource.includes("collectKeywords: collectForm.mode === 'auto' ? collectForm.keywords : ''")
     && appSource.includes("collectLinks: collectForm.mode === 'links' ? collectForm.links : ''")
+    && appSource.includes('collectDedupeWindowDays: Math.max(1, Number(collectForm.dedupeWindowDays || 7))')
     && appSource.includes("collectSkipFilters: collectForm.mode === 'links'"),
-  'Collection payload should submit active mode inputs, source-specific Amazon settings, and derive link-mode target count from pasted links.',
+  'Collection payload should submit active mode inputs, source-specific Amazon settings, dedupe days, and derive link-mode target count from pasted links.',
 );
 assert.ok(
   /label="采集来源" class="form-section form-section-choice" v-if="collectForm\.mode === 'auto'"/.test(appSource),
@@ -136,6 +145,7 @@ const autoFilterPanelSource = appSource.slice(
 );
 assert.ok(
   autoFilterPanelSource.includes('v-model:value="collectForm.count"')
+    && autoFilterPanelSource.includes('v-model:value="collectForm.dedupeWindowDays"')
     && autoFilterPanelSource.includes('v-model:value="collectForm.maxPriceCny"')
     && autoFilterPanelSource.includes('v-model:value="collectForm.minScore"')
     && !autoFilterPanelSource.includes('size="large"')
@@ -161,6 +171,13 @@ assert.ok(
   'The UI should build a collection payload.',
 );
 assert.ok(
+  !appSource.includes('label="1688 登录"')
+    && !appSource.includes('collectUse1688Login')
+    && !appSource.includes('登录 1688')
+    && !appSource.includes('登录后采集'),
+  'Collection page should not expose or submit 1688 browser login settings.',
+);
+assert.ok(
   /tasks:\s*\{\s*collect:\s*true,\s*edit:\s*false,\s*flash:\s*false/.test(appSource),
   'Collection payload should start a collection-only task.',
 );
@@ -180,12 +197,19 @@ assert.ok(
   appSource.includes('collectHistoryItems')
     && appSource.includes('<a-card v-if="currentPage === \'collect\'" title="最近采集记录"')
     && appSource.includes('商品标题')
-    && appSource.includes('采购价')
-    && appSource.includes('重量'),
-  'The collection page should show product-level collection records with title, price, and weight.',
+    && appSource.includes('采购价'),
+  'The collection page should show product-level collection records with title and price.',
+);
+const collectionHistoryPanelSource = appSource.slice(
+  appSource.indexOf('<a-card v-if="currentPage === \'collect\'" title="最近采集记录"'),
+  appSource.indexOf('<a-card v-if="currentPage !== \'home\' && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
 );
 assert.ok(
-  appSource.includes('<a-card v-if="currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
+  !collectionHistoryPanelSource.includes('title="重量"'),
+  'The collection history table should not show a weight column.',
+);
+assert.ok(
+  appSource.includes('<a-card v-if="currentPage !== \'home\' && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
   'The shared recent task history panel should not replace product records on the collection page.',
 );
 

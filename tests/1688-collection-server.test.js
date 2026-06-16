@@ -30,8 +30,23 @@ assert.ok(
   'Server default minimum score should be 50.',
 );
 assert.ok(
+  serverSource.includes("const collectCount = normalizeCollectInteger(input.collectCount || input.count, 1, 1, MAX_COLLECT_COUNT, '采集数量')"),
+  'Server default collection count should be 1.',
+);
+assert.ok(
+  serverSource.includes("collectDedupeWindowDays: normalizeCollectInteger(input.collectDedupeWindowDays || input.dedupeWindowDays || input.dedupeDays, 7, 1, 365, '最近采集去重天数')"),
+  'Server should validate custom collection dedupe days with a 7-day default.',
+);
+assert.ok(
   serverSource.includes('function normalizeCollectOptions(input = {})'),
   'Server should validate collection task options.',
+);
+assert.ok(
+  !serverSource.includes('collectUse1688Login')
+    && !serverSource.includes('getAli1688LoginConfig')
+    && !serverSource.includes('请先在账户配置里填写 1688 登录账号和密码')
+    && !serverSource.includes("'--1688-login'"),
+  'Server should not validate or pass 1688 browser login settings.',
 );
 assert.ok(
   serverSource.includes('function buildServerCapabilities()')
@@ -75,6 +90,12 @@ assert.ok(
 assert.ok(
   serverSource.includes("'--keywords'") && serverSource.includes("'--max-price'"),
   'Collection command should pass keywords and max price to the script.',
+);
+assert.ok(
+  serverSource.includes("'--dedupe-days'")
+    && serverSource.includes('String(options.collectDedupeWindowDays)')
+    && serverSource.includes('collectDedupeWindowDays: options.collectDedupeWindowDays'),
+  'Collection command and serialized run should include custom dedupe days.',
 );
 assert.ok(
   serverSource.includes('collectLinks') && serverSource.includes("'--links'"),

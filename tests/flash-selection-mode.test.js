@@ -73,9 +73,9 @@ assert.ok(
   'Flash script should parse --all mode.',
 );
 assert.ok(
-  flashSource.includes('args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? allRunningActivities : allRunningActivities.slice(0, args.count)')
+  flashSource.includes('args.flashSelectionMode === FLASH_SELECTION_MODE_ALL ? candidateRunningActivities : candidateRunningActivities.slice(0, args.count)')
     && flashSource.includes('flashSelectionMode: args.flashSelectionMode'),
-  'Flash script should process all running activities and report the selected mode.',
+  'Flash script should process all remaining running activities and report the selected mode.',
 );
 
 console.log('flash selection mode checks passed');

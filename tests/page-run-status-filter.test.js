@@ -41,7 +41,7 @@ assert.ok(
   'Run descriptions must not render the global run on every page.',
 );
 assert.ok(
-  appSource.includes('displayRun && displayRun.captcha && displayRun.captcha.status === \'waiting\''),
+  appSource.includes('v-if="displayRun.captcha && displayRun.captcha.status === \'waiting\'"'),
   'Captcha prompt should only appear on the page that owns the visible run.',
 );
 assert.ok(

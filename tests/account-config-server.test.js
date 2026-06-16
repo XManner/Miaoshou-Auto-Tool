@@ -37,9 +37,11 @@ assert.ok(
     && configSource.includes('MIMO_IMAGE_MODEL_OPTIONS')
     && configSource.includes("type: 'select'")
     && configSource.includes("key: 'AI_PROVIDER'")
-    && configSource.includes("key: 'featureModels'")
-    && configSource.includes("title: '功能模型配置'"),
-  'Account config should expose provider settings and a separate feature model section.',
+    && configSource.includes("key: 'defaultModels'")
+    && configSource.includes("title: '默认使用模型'")
+    && !configSource.includes("key: 'featureModels'")
+    && !configSource.includes("title: '功能模型配置'"),
+  'Account config should expose provider settings and grouped default model settings inside AI service.',
 );
 
 [
