@@ -263,8 +263,8 @@ body {
   grid-column: span 8;
 }
 
-.home-summary-card,
-.home-side-stack {
+.home-status-grid > .home-queue-card,
+.home-main-grid > .home-side-stack {
   grid-column: span 4;
 }
 
@@ -1565,11 +1565,12 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .home-current-card,
-  .home-summary-card,
+  .home-status-grid > .home-current-card,
+  .home-status-grid > .home-summary-card,
+  .home-status-grid > .home-queue-card,
   .home-quick-card,
-  .home-record-card,
-  .home-side-stack {
+  .home-main-grid > .home-record-card,
+  .home-main-grid > .home-side-stack {
     grid-column: 1 / -1;
   }
 

@@ -69,7 +69,7 @@ assert.ok(
 assert.ok(
   /\.home-status-grid,\s*\.home-quick-grid,\s*\.home-main-grid\s*\{[^}]*grid-template-columns:\s*repeat\(12,\s*minmax\(0,\s*1fr\)\);[^}]*gap:\s*var\(--home-gap\);/.test(styles)
     && /\.home-current-card,\s*\.home-record-card\s*\{[^}]*grid-column:\s*span 8;/.test(styles)
-    && /\.home-summary-card,\s*\.home-side-stack\s*\{[^}]*grid-column:\s*span 4;/.test(styles)
+    && /\.home-status-grid > \.home-queue-card,\s*\.home-main-grid > \.home-side-stack\s*\{[^}]*grid-column:\s*span 4;/.test(styles)
     && /\.home-quick-card\s*\{[^}]*grid-column:\s*span 4;/.test(styles),
   'Home modules should share one 12-column grid so section gaps and edges align.',
 );

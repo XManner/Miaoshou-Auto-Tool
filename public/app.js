@@ -1887,25 +1887,51 @@
                     </div>
                   </a-card>
 
-                  <a-card title="今日概况" class="soft-card home-summary-card">
-                    <div class="home-summary-list">
+                  <a-card title="任务队列" class="soft-card home-queue-card">
+                    <template #extra>
+                      <a-space size="small">
+                        <a-button size="small" type="primary" :disabled="loading || !queueItems.length" @click="startQueueRun">开始队列</a-button>
+                        <a-button size="small" :disabled="loading || (queuePaused && !queueItems.length)" @click="toggleQueuePaused">{{ queuePaused ? '继续队列' : '暂停队列' }}</a-button>
+                        <a-button size="small" :disabled="!queueItems.length" @click="clearQueue">清空队列</a-button>
+                      </a-space>
+                    </template>
+                    <div class="queue-summary">
                       <div>
-                        <span>总任务</span>
-                        <strong>{{ dashboardStats.totalRuns || 0 }}</strong>
+                        <span>队列状态</span>
+                        <strong>{{ queueStatusText }}</strong>
                       </div>
                       <div>
-                        <span>成功率</span>
-                        <strong>{{ dashboardStats.successRateText || '0%' }}</strong>
-                      </div>
-                      <div>
-                        <span>平均耗时</span>
-                        <strong>{{ dashboardStats.averageDurationText || '0秒' }}</strong>
-                      </div>
-                      <div>
-                        <span>失败记录</span>
-                        <strong>{{ homeFailureCount }}</strong>
+                        <span>待执行</span>
+                        <strong>{{ queueCountText }}</strong>
                       </div>
                     </div>
+                    <p class="queue-card-tip">{{ queuePaused ? '待执行任务会保留，点击开始队列后再执行。' : '队列正在按顺序执行，刷新页面后仍会保留剩余任务。' }}</p>
+                    <a-list :data-source="queueDisplayItems" :locale="{ emptyText: '暂无排队任务' }" size="small">
+                      <template #renderItem="{ item }">
+                        <a-list-item :class="{ 'queue-running-item': item.status === 'running' }">
+                          <a-list-item-meta>
+                            <template #title>
+                              <span>{{ item.position }}. {{ item.label }}</span>
+                            </template>
+                            <template #description>
+                              <span>{{ item.status === 'running' ? '正在执行' : '等待执行' }}</span>
+                              <span class="history-dot">·</span>
+                              <span>{{ formatDate(item.createdAt) }}</span>
+                              <template v-if="item.account && item.account.label">
+                                <span class="history-dot">·</span>
+                                <span>账号：{{ item.account.label }}</span>
+                              </template>
+                              <template v-if="item.status !== 'running'">
+                                <span class="history-dot">·</span>
+                                <a-button type="link" size="small" :disabled="loading || item.position <= (activeQueueItem ? 2 : 1)" @click="moveQueueItem(item, 'up')">上移</a-button>
+                                <a-button type="link" size="small" :disabled="loading || item.position >= queueDisplayItems.length" @click="moveQueueItem(item, 'down')">下移</a-button>
+                                <a-button type="link" size="small" :disabled="loading" @click="removeQueueItem(item)">取消</a-button>
+                              </template>
+                            </template>
+                          </a-list-item-meta>
+                        </a-list-item>
+                      </template>
+                    </a-list>
                   </a-card>
                 </div>
 
@@ -1994,51 +2020,25 @@
                   </a-card>
 
                   <div class="home-side-stack">
-                    <a-card title="任务队列" class="soft-card home-queue-card">
-                      <template #extra>
-                        <a-space size="small">
-                          <a-button size="small" type="primary" :disabled="loading || !queueItems.length" @click="startQueueRun">开始队列</a-button>
-                          <a-button size="small" :disabled="loading || (queuePaused && !queueItems.length)" @click="toggleQueuePaused">{{ queuePaused ? '继续队列' : '暂停队列' }}</a-button>
-                          <a-button size="small" :disabled="!queueItems.length" @click="clearQueue">清空队列</a-button>
-                        </a-space>
-                      </template>
-                      <div class="queue-summary">
+                    <a-card title="今日概况" class="soft-card home-summary-card">
+                      <div class="home-summary-list">
                         <div>
-                          <span>队列状态</span>
-                          <strong>{{ queueStatusText }}</strong>
+                          <span>总任务</span>
+                          <strong>{{ dashboardStats.totalRuns || 0 }}</strong>
                         </div>
                         <div>
-                          <span>待执行</span>
-                          <strong>{{ queueCountText }}</strong>
+                          <span>成功率</span>
+                          <strong>{{ dashboardStats.successRateText || '0%' }}</strong>
+                        </div>
+                        <div>
+                          <span>平均耗时</span>
+                          <strong>{{ dashboardStats.averageDurationText || '0秒' }}</strong>
+                        </div>
+                        <div>
+                          <span>失败记录</span>
+                          <strong>{{ homeFailureCount }}</strong>
                         </div>
                       </div>
-                      <p class="queue-card-tip">{{ queuePaused ? '待执行任务会保留，点击开始队列后再执行。' : '队列正在按顺序执行，刷新页面后仍会保留剩余任务。' }}</p>
-                      <a-list :data-source="queueDisplayItems" :locale="{ emptyText: '暂无排队任务' }" size="small">
-                        <template #renderItem="{ item }">
-                          <a-list-item :class="{ 'queue-running-item': item.status === 'running' }">
-                            <a-list-item-meta>
-                              <template #title>
-                                <span>{{ item.position }}. {{ item.label }}</span>
-                              </template>
-                              <template #description>
-                                <span>{{ item.status === 'running' ? '正在执行' : '等待执行' }}</span>
-                                <span class="history-dot">·</span>
-                                <span>{{ formatDate(item.createdAt) }}</span>
-                                <template v-if="item.account && item.account.label">
-                                  <span class="history-dot">·</span>
-                                  <span>账号：{{ item.account.label }}</span>
-                                </template>
-                                <template v-if="item.status !== 'running'">
-                                  <span class="history-dot">·</span>
-                                  <a-button type="link" size="small" :disabled="loading || item.position <= (activeQueueItem ? 2 : 1)" @click="moveQueueItem(item, 'up')">上移</a-button>
-                                  <a-button type="link" size="small" :disabled="loading || item.position >= queueDisplayItems.length" @click="moveQueueItem(item, 'down')">下移</a-button>
-                                  <a-button type="link" size="small" :disabled="loading" @click="removeQueueItem(item)">取消</a-button>
-                                </template>
-                              </template>
-                            </a-list-item-meta>
-                          </a-list-item>
-                        </template>
-                      </a-list>
                     </a-card>
 
                     <a-card title="关键日志" class="soft-card home-log-card">

@@ -82,6 +82,26 @@ assert.ok(
       && !appSource.includes('<h2>功能概览</h2>'),
   'The home page should present a compact operations workbench instead of the old overview copy.',
 );
+const homeStatusSection = appSource.slice(
+  appSource.indexOf('<div class="home-status-grid">'),
+  appSource.indexOf('<div class="home-quick-grid">'),
+);
+const homeSideSection = appSource.slice(
+  appSource.indexOf('<div class="home-side-stack">'),
+  appSource.indexOf('</div>\n                </div>\n              </section>'),
+);
+assert.ok(
+  homeStatusSection.includes('title="当前运行"')
+    && homeStatusSection.includes('title="任务队列"')
+    && !homeStatusSection.includes('title="今日概况"'),
+  'The home top status row should show current run and task queue.',
+);
+assert.ok(
+  homeSideSection.includes('title="今日概况"')
+    && homeSideSection.includes('title="关键日志"')
+    && homeSideSection.indexOf('title="今日概况"') < homeSideSection.indexOf('title="关键日志"'),
+  'The home side column should show today overview above key logs.',
+);
 assert.ok(
   /@click="navigateToPage\('collect'\)"[\s\S]*@click="navigateToPage\('products'\)"[\s\S]*@click="navigateToPage\('flash'\)"/.test(appSource),
   'The home workbench should provide entry buttons for collection, editing, and flash-sale pages.',
