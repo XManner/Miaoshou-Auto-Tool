@@ -22,6 +22,7 @@ temp/
 .run-queue.json
 .collection-dedupe.json
 .diagnostics/
+.worktrees/
 
 # Local reports / exports that may contain shop or product data
 *_report.json
