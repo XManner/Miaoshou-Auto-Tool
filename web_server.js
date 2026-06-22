@@ -2,8 +2,9 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawn, spawnSync, execFile } = require('child_process');
 const { randomUUID } = require('crypto');
+
 const {
   loadDotEnv,
   readEnvFile,
@@ -67,6 +68,7 @@ const CAPTCHA_DIR = path.join(__dirname, '.captcha');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_LOG_LINES = 2000;
 const MAX_HISTORY_ITEMS = 20;
+const STOP_FORCE_KILL_DELAY_MS = 5000;
 const PROCESSING_MODE_FAST = 'fast';
 const PROCESSING_MODE_PRECISE = 'precise';
 const ITEM_SELECTION_MODE_RANGE = 'range';
@@ -113,6 +115,43 @@ const STATIC_ASSET_MAP = new Map([
   ['/vendor/ant-design-vue/antd.min.js', path.join(__dirname, 'node_modules/ant-design-vue/dist/antd.min.js')],
   ['/vendor/ant-design-vue/reset.css', path.join(__dirname, 'node_modules/ant-design-vue/dist/reset.css')],
 ]);
+
+function recognizeCaptchaImage(imagePath) {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(__dirname, 'tools', 'local_ocr_demo.py');
+
+    execFile(
+      'python3',
+      [scriptPath, imagePath, '--json', '--allow-short'],
+      { cwd: __dirname },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr || error.message));
+          return;
+        }
+
+        try {
+          const result = JSON.parse(stdout);
+          const code = String(result.code || '').trim();
+          const expectedLength = Number.isFinite(Number(result.expected_length))
+            ? Number(result.expected_length)
+            : 4;
+          resolve({
+            code,
+            raw: String(result.raw || '').trim(),
+            expectedLength,
+            lengthOk: Boolean(result.length_ok),
+            hint: code && !result.length_ok
+              ? `识别结果是 ${code.length} 位，验证码通常是 ${expectedLength} 位，请人工确认。`
+              : '',
+          });
+        } catch (parseError) {
+          reject(parseError);
+        }
+      },
+    );
+  });
+}
 
 function getBrowserOpenUrl(host, port) {
   if (host === '0.0.0.0' || host === '::') {
@@ -977,7 +1016,7 @@ function getPhaseLabel(phase = '') {
   return labels[phase] || '准备中';
 }
 
-function updateRunProgress(run, event = {}) {
+async function updateRunProgress(run, event = {}) {
   const overallPercent = Number.isFinite(Number(event.overallPercent))
     ? Math.max(0, Math.min(100, Number(event.overallPercent)))
     : run.progress.overallPercent;
@@ -1003,12 +1042,37 @@ function updateRunProgress(run, event = {}) {
 
   if (event.captcha && event.captcha.id) {
     const imageFile = safeCaptchaName(event.captcha.imageFile || '');
+    const localImagePath = captchaImagePath(imageFile);
+    let recognizedCode = '';
+    let recognizedRaw = '';
+    let recognizedHint = '';
+    let recognizedError = '';
+    console.log('验证码本地图片路径:', localImagePath);
+
+    try {
+      const recognized = await recognizeCaptchaImage(localImagePath);
+      recognizedCode = recognized.code || '';
+      recognizedRaw = recognized.raw || '';
+      recognizedHint = recognized.hint || '';
+      console.log('识别结果:', recognizedCode);
+      if (recognizedHint) {
+        console.warn('识别建议需人工确认:', recognizedHint);
+      }
+    } catch (error) {
+      recognizedError = '自动识别失败，请手动输入验证码。';
+      console.error('识别失败:', error.message || error);
+    }
+
     run.captcha = {
       id: String(event.captcha.id),
       status: 'waiting',
       accountLabel: event.captcha.accountLabel ? maskPhoneText(event.captcha.accountLabel) : '',
       message: event.captcha.message ? maskPhoneText(event.captcha.message) : '请输入验证码后继续。',
       imageUrl: imageFile ? `/api/captcha/image/${encodeURIComponent(imageFile)}?v=${Date.now()}` : '',
+      recognizedCode,
+      recognizedRaw,
+      recognizedHint,
+      recognizedError,
       createdAt: event.captcha.createdAt || new Date().toISOString(),
       submittedAt: null,
     };
@@ -1366,8 +1430,20 @@ function serializeRun(run) {
   };
 }
 
+function hasChildExited(child) {
+  return !child || child.exitCode !== null || child.signalCode !== null;
+}
+
 function isRunActive(run) {
-  return run && run.status === 'running' && run.child && !run.child.killed;
+  return Boolean(run && run.status === 'running' && run.child && !hasChildExited(run.child));
+}
+
+function clearStopTimer(run) {
+  if (!run || !run.stopTimer) {
+    return;
+  }
+  clearTimeout(run.stopTimer);
+  run.stopTimer = null;
 }
 
 function finalizeStoppedRun(run) {
@@ -1375,6 +1451,7 @@ function finalizeStoppedRun(run) {
     return false;
   }
 
+  clearStopTimer(run);
   run.status = 'stopped';
   run.error = '';
   run.captcha = null;
@@ -1888,13 +1965,12 @@ function startCollectRun(options) {
   };
 
   appendLog(run, 'system', `开始执行：${command}`);
-  appendLog(run, 'system', `采集来源：${
-    options.collectSource === COLLECT_SOURCE_LINKS
-      ? '商品链接'
-      : options.collectSource === COLLECT_SOURCE_AMAZON
+  appendLog(run, 'system', `采集来源：${options.collectSource === COLLECT_SOURCE_LINKS
+    ? '商品链接'
+    : options.collectSource === COLLECT_SOURCE_AMAZON
       ? 'Amazon.com'
       : (options.collectSource === COLLECT_SOURCE_SHOPEE ? `Shopee ${options.collectShopeeSite}` : '1688')
-  }。`);
+    }。`);
   appendLog(run, 'system', `采集关键词：${options.collectKeywords}`);
   if (options.collectLinks) {
     appendLog(run, 'system', '已提供商品链接，将直接通过妙手接口采集。');
@@ -2363,10 +2439,26 @@ function stopCurrentRun() {
   }
 
   const run = currentRun;
-  appendLog(run, 'system', '正在停止当前任务...');
+  if (!run.stopRequested) {
+    appendLog(run, 'system', '正在停止当前任务...');
+  }
   run.stopRequested = true;
   run.captcha = null;
-  run.child.kill('SIGTERM');
+  const sent = run.child.kill('SIGTERM');
+  if (!sent) {
+    appendLog(run, 'system', '停止信号发送失败，正在尝试强制结束进程...');
+  }
+  clearStopTimer(run);
+  run.stopTimer = setTimeout(() => {
+    if (!run.child || hasChildExited(run.child)) {
+      return;
+    }
+    appendLog(run, 'system', '任务停止超时，正在强制结束进程...');
+    run.child.kill('SIGKILL');
+  }, STOP_FORCE_KILL_DELAY_MS);
+  if (typeof run.stopTimer.unref === 'function') {
+    run.stopTimer.unref();
+  }
   return true;
 }
 

@@ -534,6 +534,8 @@
       const serverCapabilities = ref({ collectSources: [] });
       const statusTimer = ref(null);
       const captchaCode = ref('');
+      const captchaSubmitting = ref(false);
+      const lastAutoFilledCaptchaId = ref('');
       const logBox = ref(null);
       const logPinned = ref(true);
       const loading = ref(false);
@@ -662,8 +664,8 @@
         const currentItem = isLimitStoreRun
           ? (detailName || detailId || (isPageRunning.value ? phaseLabel || '正在处理店铺' : '等待开始'))
           : (detailId
-          ? `商品 ${detailId}`
-          : (isPageRunning.value ? '正在读取商品' : '等待开始'));
+            ? `商品 ${detailId}`
+            : (isPageRunning.value ? '正在读取商品' : '等待开始'));
         const completedText = completed === null ? 0 : completed;
         const totalText = total === null ? 0 : total;
         return {
@@ -918,10 +920,10 @@
         productLimitRealtimeStores.value.length
           ? productLimitRealtimeStores.value
           : (runSummary.value
-        && runSummary.value.mode === 'product-limit-store-unpublish'
-        && Array.isArray(runSummary.value.matchedStores)
-          ? runSummary.value.matchedStores
-          : [])
+            && runSummary.value.mode === 'product-limit-store-unpublish'
+            && Array.isArray(runSummary.value.matchedStores)
+            ? runSummary.value.matchedStores
+            : [])
       ));
       const collectTaskSummary = computed(() => {
         const account = defaultAccount.value ? maskPhoneText(defaultAccount.value.label) : '默认账号';
@@ -1247,6 +1249,9 @@
             : { totalRuns: 0, successRateText: '0%', averageDurationText: '0秒', failureRanking: [] };
           if (!currentRun.value || !currentRun.value.captcha || currentRun.value.captcha.status !== 'waiting') {
             captchaCode.value = '';
+            lastAutoFilledCaptchaId.value = '';
+          } else {
+            syncCaptchaSuggestion(currentRun.value.captcha);
           }
         } catch (error) {
           notify('error', normalizeApiError(error));
@@ -1598,9 +1603,10 @@
       }
 
       async function submitCaptcha() {
-        if (!canSubmitCaptcha.value) {
+        if (!canSubmitCaptcha.value || captchaSubmitting.value) {
           return;
         }
+        captchaSubmitting.value = true;
         try {
           await requestJson('/api/captcha', {
             method: 'POST',
@@ -1615,13 +1621,33 @@
           notify('success', '验证码已提交。');
         } catch (error) {
           notify('error', normalizeApiError(error));
+        } finally {
+          captchaSubmitting.value = false;
         }
+      }
+
+      function onCaptchaInput() {
+        if (/^\d{4}$/.test(captchaCode.value.trim())) {
+          submitCaptcha();
+        }
+      }
+
+      function syncCaptchaSuggestion(captcha = null) {
+        const captchaId = captcha && captcha.id ? String(captcha.id).trim() : '';
+        const recognizedCode = captcha && captcha.recognizedCode ? String(captcha.recognizedCode).trim() : '';
+        if (!captchaId || !recognizedCode || lastAutoFilledCaptchaId.value === captchaId) {
+          return;
+        }
+        captchaCode.value = recognizedCode;
+        lastAutoFilledCaptchaId.value = captchaId;
+
       }
 
       async function clearLogs() {
         try {
           await requestJson('/api/logs/clear', { method: 'POST' });
           captchaCode.value = '';
+          lastAutoFilledCaptchaId.value = '';
           await fetchStatus();
         } catch (error) {
           notify('error', normalizeApiError(error));
@@ -1768,6 +1794,7 @@
       watch(() => visibleLogs.value.length, keepLogPinned);
       watch(currentPage, updateDocumentTitle, { immediate: true });
       watch(themeName, applyTheme);
+      watch(captchaCode, onCaptchaInput);
 
       onMounted(async () => {
         applyTheme();
@@ -1918,6 +1945,7 @@
         switchPage,
         themeName,
         toggleQueuePaused,
+        onCaptchaInput,
         useLocalEnv,
         visibleLogs,
         visibleHistory,

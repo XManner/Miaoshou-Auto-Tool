@@ -35,6 +35,36 @@ assert.ok(
   'The Vue captcha panel should bind the latest captcha image URL.',
 );
 assert.ok(
+  serverSource.includes("'--allow-short'")
+    && serverSource.includes('recognizedCode')
+    && serverSource.includes('recognizedHint')
+    && !serverSource.includes('submitCaptchaCode({ captchaId, code })'),
+  'Captcha OCR should be saved for local input fill and must not auto-submit the code.',
+);
+assert.ok(
+  !appSource.includes('captcha-suggestion')
+    && !styles.includes('captcha-suggestion')
+    && !appSource.includes('function useCaptchaSuggestion()')
+    && !appSource.includes('@click="useCaptchaSuggestion"'),
+  'The Vue captcha panel should not render a separate OCR suggestion block.',
+);
+assert.ok(
+  appSource.includes('lastAutoFilledCaptchaId')
+    && appSource.includes('function syncCaptchaSuggestion(captcha = null)')
+    && appSource.includes('captchaCode.value = recognizedCode')
+    && appSource.includes('syncCaptchaSuggestion(currentRun.value.captcha)')
+    && appSource.includes('lastAutoFilledCaptchaId.value === captchaId'),
+  'The Vue captcha panel should auto-fill the OCR suggestion once per captcha so the user can submit or edit it.',
+);
+assert.ok(
+  appSource.includes('captchaSubmitting')
+    && appSource.includes('function onCaptchaInput()')
+    && appSource.includes('if (/^\\d{4}$/.test(captchaCode.value.trim()))')
+    && appSource.includes('watch(captchaCode, onCaptchaInput)')
+    && !appSource.includes('@input="onCaptchaInput"'),
+  'The Vue captcha panel should listen to captchaCode changes and auto-submit after the user enters or edits a 4-digit code.',
+);
+assert.ok(
   /\.captcha-image-wrap\s*\{[^}]*overflow:\s*visible;/.test(styles)
     && /\.captcha-image-wrap img\s*\{[^}]*max-width:\s*100%;[^}]*min-width:\s*0;/.test(styles)
     && !/\.captcha-image-wrap\s*\{[^}]*max-height:\s*420px;/.test(styles),

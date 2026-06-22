@@ -20,6 +20,38 @@ const ADD_PRODUCT_EXCLUSION_FILTER_LABELS = [
   '隐藏已参与限时秒杀的产品',
   '隐藏已参与本次活动的产品',
 ];
+const STOP_BROWSER_CLOSE_TIMEOUT_MS = 3000;
+
+let activeBrowser = null;
+let stoppingBySignal = false;
+
+function closeBrowserWithTimeout(browser, timeoutMs = STOP_BROWSER_CLOSE_TIMEOUT_MS) {
+  if (!browser) {
+    return Promise.resolve();
+  }
+  return Promise.race([
+    browser.close(),
+    sleep(timeoutMs),
+  ]).catch(() => { });
+}
+
+async function stopFromSignal(signal) {
+  if (stoppingBySignal) {
+    return;
+  }
+  stoppingBySignal = true;
+  log(`收到停止信号 ${signal}，正在关闭自动化浏览器。`);
+  await closeBrowserWithTimeout(activeBrowser);
+  process.exit(130);
+}
+
+process.once('SIGTERM', () => {
+  stopFromSignal('SIGTERM');
+});
+
+process.once('SIGINT', () => {
+  stopFromSignal('SIGINT');
+});
 
 function parseArgs(argv = process.argv.slice(2)) {
   const args = {
@@ -197,10 +229,10 @@ async function maximizeBrowserWindow(page) {
           width: DEFAULT_BROWSER_WINDOW_WIDTH,
           height: DEFAULT_BROWSER_WINDOW_HEIGHT,
         },
-      }).catch(() => {});
+      }).catch(() => { });
     }
   } finally {
-    await session.detach().catch(() => {});
+    await session.detach().catch(() => { });
   }
 }
 
@@ -223,7 +255,7 @@ async function getBrowserWindowBounds(page) {
 
     return await session.send('Browser.getWindowBounds', { windowId }).catch(() => null);
   } finally {
-    await session.detach().catch(() => {});
+    await session.detach().catch(() => { });
   }
 }
 
@@ -275,14 +307,14 @@ async function ensureLargeBrowserViewport(page) {
     width: viewportWidth,
     height: viewportHeight,
     deviceScaleFactor: 1,
-  }).catch(() => {});
+  }).catch(() => { });
   await page.evaluate(({ width, height }) => {
     window.moveTo(0, 0);
     window.resizeTo(width, height);
   }, {
     width: viewportWidth,
     height: viewportHeight,
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 function normalizeText(value = '') {
@@ -415,7 +447,7 @@ async function bodyText(page, retries = 5) {
       if (!isNavigationContextError(error) || attempt === retries) {
         throw error;
       }
-      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => {});
+      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => { });
       await sleep(700);
     }
   }
@@ -610,7 +642,11 @@ async function captureLoginCaptcha(page, captchaId) {
   await ensureLargeBrowserViewport(page);
   await sleep(1200);
 
+
   const clip = await page.evaluate(() => {
+
+
+
     const isVisible = (element) => {
       if (!element) return false;
       const rect = element.getBoundingClientRect();
@@ -628,18 +664,6 @@ async function captureLoginCaptcha(page, captchaId) {
       width: Math.max(0, Math.min(window.innerWidth, rect.right) - Math.max(0, rect.left)),
       height: Math.max(0, Math.min(window.innerHeight, rect.bottom) - Math.max(0, rect.top)),
     });
-    const unionRects = (rects) => {
-      const valid = rects
-        .filter(Boolean)
-        .map(normalizedRect)
-        .filter((rect) => rect.width > 0 && rect.height > 0);
-      if (!valid.length) return null;
-      const left = Math.min(...valid.map((rect) => rect.left));
-      const top = Math.min(...valid.map((rect) => rect.top));
-      const right = Math.max(...valid.map((rect) => rect.right));
-      const bottom = Math.max(...valid.map((rect) => rect.bottom));
-      return { left, top, right, bottom, width: right - left, height: bottom - top };
-    };
     const textFor = (element) => [
       element.placeholder,
       element.getAttribute?.('aria-label'),
@@ -665,11 +689,14 @@ async function captureLoginCaptcha(page, captchaId) {
         const rect = normalizedRect(element.getBoundingClientRect());
         const text = textFor(element);
         let score = /验证码|校验码|captcha|verify|code/i.test(text) ? 1000 : 0;
+        if (rect.width >= 70 && rect.width <= 260 && rect.height >= 24 && rect.height <= 100) {
+          score += 160;
+        }
         if (inputRect) {
           const centerY = rect.top + rect.height / 2;
           const inputCenterY = inputRect.top + inputRect.height / 2;
           score += Math.max(0, 240 - Math.abs(centerY - inputCenterY));
-          score += rect.left >= inputRect.left - 40 ? 80 : 0;
+          score += rect.left >= inputRect.left + inputRect.width * 0.45 ? 220 : 0;
           score += rect.top <= inputRect.bottom + 80 && rect.bottom >= inputRect.top - 80 ? 80 : 0;
           score += Math.abs((rect.left + rect.width / 2) - (inputRect.left + inputRect.width / 2)) < 520 ? 40 : 0;
         }
@@ -684,38 +711,37 @@ async function captureLoginCaptcha(page, captchaId) {
       })
       .sort((a, b) => b.score - a.score);
 
-    const nearbyVisuals = visuals
+    const captchaVisual = visuals
       .filter((item) => item.score > 0)
       .filter((item) => !inputRect || (
-        item.rect.top <= inputRect.bottom + 180
-        && item.rect.bottom >= inputRect.top - 180
-        && item.rect.left <= inputRect.right + 520
-        && item.rect.right >= inputRect.left - 180
+        item.rect.top <= inputRect.bottom + 80
+        && item.rect.bottom >= inputRect.top - 80
+        && item.rect.left >= inputRect.left + inputRect.width * 0.35
+        && item.rect.right <= inputRect.right + 260
       ))
-      .slice(0, 3)
-      .map((item) => item.rect);
+      .find((item) => item.rect.width >= 50 && item.rect.height >= 20);
 
     let targetRect = null;
-    if (inputRect) {
-      const labelRects = Array.from(document.querySelectorAll('label, span, div'))
-        .filter(isVisible)
-        .filter((element) => /验证码|校验码/.test((element.innerText || element.textContent || '').replace(/\s+/g, '')))
-        .map((element) => normalizedRect(element.getBoundingClientRect()))
-        .filter((rect) => rect.top <= inputRect.bottom + 120 && rect.bottom >= inputRect.top - 120);
-      targetRect = unionRects([inputRect, ...nearbyVisuals, ...labelRects]);
-      if (formRect && (!targetRect || targetRect.width < 180 || targetRect.height < 70)) {
-        targetRect = formRect;
-      }
-    } else if (nearbyVisuals.length) {
-      targetRect = unionRects(nearbyVisuals);
+    if (captchaVisual) {
+      targetRect = captchaVisual.rect;
+    } else if (inputRect) {
+      const fallbackWidth = Math.max(90, Math.min(180, inputRect.width * 0.38));
+      targetRect = {
+        left: Math.max(0, inputRect.right - fallbackWidth),
+        top: inputRect.top,
+        right: inputRect.right,
+        bottom: inputRect.bottom,
+        width: fallbackWidth,
+        height: inputRect.height,
+      };
     }
     if (!targetRect) return null;
 
-    const padding = 24;
+    const padding = 4;
     const x = Math.max(0, Math.floor(targetRect.left - padding));
     const y = Math.max(0, Math.floor(targetRect.top - padding));
-    const width = Math.min(window.innerWidth - x, Math.max(260, Math.ceil(targetRect.width + padding * 2)));
-    const height = Math.min(window.innerHeight - y, Math.max(120, Math.ceil(targetRect.height + padding * 2)));
+    const width = Math.min(window.innerWidth - x, Math.max(80, Math.ceil(targetRect.width + padding * 2)));
+    const height = Math.min(window.innerHeight - y, Math.max(28, Math.ceil(targetRect.height + padding * 2)));
     if (width <= 0 || height <= 0) return null;
     return { x, y, width, height };
   });
@@ -756,7 +782,11 @@ async function requestCaptchaFromWeb(page, accountLabel) {
   const responseFile = captchaResponsePath(captchaId);
   fs.rmSync(responseFile, { force: true });
   const imageFile = await captureLoginCaptcha(page, captchaId);
+
   const createdAt = new Date().toISOString();
+  console.log('验证码图片文件名:', imageFile);
+  console.log('验证码图片本地路径:', path.join(getCaptchaDir(), imageFile));
+
   fs.writeFileSync(path.join(getCaptchaDir(), `captcha-request-${safeFilePart(captchaId)}.json`), JSON.stringify({
     id: captchaId,
     runId: getRunId(),
@@ -964,7 +994,7 @@ async function ensureLoggedIn(page) {
       return;
     }
     if (hasLoginCueText(text) && await fillCaptchaIfPresent()) {
-      await clickText(page, '立即登录', { selector: 'button', exact: true, afterClickMs: 1200 }).catch(() => {});
+      await clickText(page, '立即登录', { selector: 'button', exact: true, afterClickMs: 1200 }).catch(() => { });
       continue;
     }
     await sleep(1500);
@@ -1265,7 +1295,7 @@ async function ensureActivityListPage(browser, listPage, options = {}) {
 
   page.setDefaultTimeout(DEFAULT_TIMEOUT);
   page.setDefaultNavigationTimeout(DEFAULT_TIMEOUT);
-  await page.bringToFront().catch(() => {});
+  await page.bringToFront().catch(() => { });
   await ensureLargeBrowserViewport(page);
 
   let text = await bodyText(page, 1).catch(() => '');
@@ -1673,12 +1703,12 @@ async function searchActivityById(page, activityId) {
       return container;
     };
     const ownTextFor = (input) => normalize([
-        input.placeholder,
-        input.getAttribute('aria-label'),
-        input.getAttribute('title'),
-        input.name,
-        input.id,
-      ].join(' '));
+      input.placeholder,
+      input.getAttribute('aria-label'),
+      input.getAttribute('title'),
+      input.name,
+      input.id,
+    ].join(' '));
     const textFor = (input) => {
       const pieces = [ownTextFor(input)];
       const fieldContainer = findClosestFieldContainer(input);
@@ -1887,20 +1917,20 @@ async function leaveActivityDetailPage(browser, listPage, detailPage) {
   }
 
   if (detailPage !== listPage) {
-    await detailPage.close({ runBeforeUnload: false }).catch(() => {});
+    await detailPage.close({ runBeforeUnload: false }).catch(() => { });
     if (listPage && !listPage.isClosed()) {
-      await listPage.bringToFront().catch(() => {});
+      await listPage.bringToFront().catch(() => { });
     }
     return listPage;
   }
 
-  await clickText(detailPage, '返回活动列表', { exact: true, afterClickMs: 1500 }).catch(() => {});
+  await clickText(detailPage, '返回活动列表', { exact: true, afterClickMs: 1500 }).catch(() => { });
   const text = await bodyText(detailPage, 1).catch(() => '');
   const url = detailPage.url();
   if (!isFlashSaleListReadyText(text, url) && !isFlashSaleShellText(text, url)) {
-    await detailPage.goto(FLASH_SALE_URL, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT }).catch(() => {});
+    await detailPage.goto(FLASH_SALE_URL, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT }).catch(() => { });
   }
-  await waitForFlashSaleListReady(detailPage, DEFAULT_TIMEOUT).catch(() => {});
+  await waitForFlashSaleListReady(detailPage, DEFAULT_TIMEOUT).catch(() => { });
   return detailPage;
 }
 
@@ -2558,7 +2588,7 @@ async function ensureUnpricedFilter(page) {
     throw new Error('没有找到“仅展示未设置秒杀价产品”筛选。');
   }
   log('已勾选“仅展示未设置秒杀价产品”，等待筛选结果刷新。');
-  await waitForUnpricedFilterChecked(page, 15000).catch(() => {});
+  await waitForUnpricedFilterChecked(page, 15000).catch(() => { });
   await waitForFilteredProductListStable(page, 60000);
   log('筛选结果已刷新，继续设置商品列表分页。');
   await sleep(FLASH_SAFE_STEP_DELAY_MS);
@@ -3591,7 +3621,7 @@ async function continueEditingFailedProducts(page, failedCount) {
   });
   await selectAllFailureProducts(page);
   await clickFailureDialogContinueEdit(page);
-  await waitForDialogGone(page, '继续编辑', DEFAULT_TIMEOUT).catch(() => {});
+  await waitForDialogGone(page, '继续编辑', DEFAULT_TIMEOUT).catch(() => { });
   await sleep(2000);
 }
 
@@ -3636,12 +3666,12 @@ async function submitActivity(page) {
   await sleep(2000);
   const result = await waitForSubmitResult(page);
   if (result.failedCount <= 0) {
-    await closeSubmitResultPrompt(page).catch(() => {});
+    await closeSubmitResultPrompt(page).catch(() => { });
     return { failedCount: 0, submitRounds: 1 };
   }
 
   log(`提交后仍有失败产品：${result.failedCount}，不再打开失败列表，改为重新处理当前活动剩余未设置商品。`);
-  await closeSubmitResultPrompt(page).catch(() => {});
+  await closeSubmitResultPrompt(page).catch(() => { });
   return { failedCount: result.failedCount, submitRounds: 1 };
 }
 
@@ -3679,7 +3709,7 @@ async function processActivity(browser, listPage, activity, runState) {
   for (let attempt = 1; attempt <= MAX_FAILURE_RETRY_ROUNDS; attempt += 1) {
     if (attempt > 1) {
       log(`第 ${attempt} 轮重新处理当前秒杀活动：重新走添加产品流程后，再处理剩余未设置秒杀价商品。`);
-      await detailPage.reload({ waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT }).catch(() => {});
+      await detailPage.reload({ waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT }).catch(() => { });
       await waitForBodyText(detailPage, '管理活动产品', DEFAULT_TIMEOUT);
       await sleep(1500);
     }
@@ -3796,6 +3826,7 @@ async function run() {
         '--disable-features=Translate',
       ],
     });
+    activeBrowser = browser;
 
     const pages = await browser.pages();
     let listPage = pages[0] || await browser.newPage();
@@ -3902,7 +3933,10 @@ async function run() {
     throw error;
   } finally {
     if (browser) {
-      await browser.close().catch(() => {});
+      await closeBrowserWithTimeout(browser);
+      if (activeBrowser === browser) {
+        activeBrowser = null;
+      }
     }
   }
 }
