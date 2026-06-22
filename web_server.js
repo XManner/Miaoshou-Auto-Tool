@@ -62,6 +62,7 @@ const PORT = Number.parseInt(process.env.WEB_PORT || '3000', 10);
 const SCRIPT_PATH = path.join(__dirname, 'miaoshou_auto.js');
 const FLASH_SCRIPT_PATH = path.join(__dirname, 'miaoshou_flash_sale.js');
 const COLLECT_SCRIPT_PATH = path.join(__dirname, 'miaoshou_1688_collect.js');
+const PRODUCT_MANAGEMENT_SCRIPT_PATH = path.join(__dirname, 'miaoshou_product_management.js');
 const CAPTCHA_DIR = path.join(__dirname, '.captcha');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_LOG_LINES = 2000;
@@ -80,16 +81,21 @@ const COLLECT_SOURCE_1688 = '1688';
 const COLLECT_SOURCE_SHOPEE = 'shopee';
 const COLLECT_SOURCE_AMAZON = 'amazon';
 const COLLECT_SOURCE_LINKS = 'links';
+const PRODUCT_MANAGEMENT_ACTION_UNPUBLISH_LIMIT_STORES = 'unpublish-limit-stores';
 const SHOPEE_SITE_CODES = new Set(['my', 'ph', 'th']);
 const MAX_EDIT_ITEM_INDEX = 500;
 const MAX_SOURCE_PRICE_EXTRA_CNY = 1000;
 const MAX_COLLECT_COUNT = 100;
 const MAX_COLLECT_PRICE_CNY = 10000;
+const MAX_PRODUCT_MANAGEMENT_SCAN_PAGES = 50;
+const DEFAULT_PRODUCT_MANAGEMENT_RETAIN_COUNT = 900;
+const MAX_PRODUCT_MANAGEMENT_RETAIN_COUNT = 100000;
 const DEFAULT_WEIGHT_PADDING_GRAMS = (() => {
   const parsed = Number.parseFloat(process.env.SKU_WEIGHT_PADDING_GRAMS || '30');
   return Number.isFinite(parsed) && parsed >= 0 ? Number(parsed.toFixed(1)) : 30;
 })();
 const MAX_WEIGHT_PADDING_GRAMS = 5000;
+const DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT = 90;
 const STATIC_ASSET_MAP = new Map([
   ['/assets/app.js', path.join(PUBLIC_DIR, 'app.js')],
   ['/assets/styles.css', path.join(PUBLIC_DIR, 'styles.css')],
@@ -305,14 +311,19 @@ function resolveRunAccount(accountId = '') {
 function normalizeRunOptions(input = {}) {
   const rawTasks = input.tasks && typeof input.tasks === 'object' ? input.tasks : {};
   const collectRequested = Boolean(rawTasks.collect);
+  const productManagementRequested = Boolean(rawTasks.productManagement);
   const tasks = {
     collect: Boolean(rawTasks.collect),
-    edit: collectRequested ? Boolean(rawTasks.edit) : rawTasks.edit !== false,
+    edit: collectRequested || productManagementRequested ? Boolean(rawTasks.edit) : rawTasks.edit !== false,
     flash: Boolean(rawTasks.flash),
+    productManagement: Boolean(rawTasks.productManagement),
   };
 
-  if (!tasks.collect && !tasks.edit && !tasks.flash) {
+  if (!tasks.collect && !tasks.edit && !tasks.flash && !tasks.productManagement) {
     throw new Error('请至少选择一个要执行的任务。');
+  }
+  if (tasks.productManagement && (tasks.collect || tasks.edit || tasks.flash)) {
+    throw new Error('商品管理下架任务需要单独执行。');
   }
   if (tasks.collect && (tasks.edit || tasks.flash)) {
     throw new Error('商品采集任务需要单独执行。');
@@ -324,6 +335,14 @@ function normalizeRunOptions(input = {}) {
   }
   if (!account.appId || !account.appSecret) {
     throw new Error(`账号 ${maskPhoneText(account.label)} 缺少 App ID 或 App Secret。`);
+  }
+
+  if (tasks.productManagement) {
+    return {
+      ...normalizeProductManagementOptions(input),
+      tasks,
+      account,
+    };
   }
 
   if (tasks.collect) {
@@ -359,6 +378,9 @@ function normalizeRunOptions(input = {}) {
   const sourcePriceExtraCny = tasks.edit ? normalizeSourcePriceExtraCny(input.sourcePriceExtraCny) : 0;
   const weightPaddingGrams = tasks.edit ? normalizeWeightPaddingGrams(input.weightPaddingGrams) : DEFAULT_WEIGHT_PADDING_GRAMS;
   const buyOneTakeOne = tasks.edit ? normalizeBooleanOption(input.buyOneTakeOne, false) : false;
+  const buyOneTakeOnePriceMarkupPercent = tasks.edit
+    ? normalizeBuyOneTakeOnePriceMarkupPercent(input.buyOneTakeOnePriceMarkupPercent)
+    : DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT;
 
   const flashActivityIds = tasks.flash ? normalizeIdList(input.flashActivityIds || input.activityIds) : [];
   const skipFlashActivityIds = tasks.flash ? normalizeIdList(input.skipFlashActivityIds || input.skipActivityIds || input.processedFlashActivityIds) : [];
@@ -387,6 +409,7 @@ function normalizeRunOptions(input = {}) {
     sourcePriceExtraCny,
     weightPaddingGrams,
     buyOneTakeOne,
+    buyOneTakeOnePriceMarkupPercent,
     flashSelectionMode,
     flashCount,
     flashActivityIds,
@@ -504,6 +527,24 @@ function normalizeCollectOptions(input = {}) {
   };
 }
 
+function normalizeProductManagementAction(value = PRODUCT_MANAGEMENT_ACTION_UNPUBLISH_LIMIT_STORES) {
+  const normalized = String(value || PRODUCT_MANAGEMENT_ACTION_UNPUBLISH_LIMIT_STORES).trim();
+  if (normalized !== PRODUCT_MANAGEMENT_ACTION_UNPUBLISH_LIMIT_STORES) {
+    throw new Error('不支持的商品管理任务。');
+  }
+  return normalized;
+}
+
+function normalizeProductManagementOptions(input = {}) {
+  return {
+    productManagementAction: normalizeProductManagementAction(input.productManagementAction || input.action),
+    productManagementMaxPages: normalizeCollectInteger(input.productManagementMaxPages ?? input.maxPages, 5, 1, MAX_PRODUCT_MANAGEMENT_SCAN_PAGES, '发布记录扫描页数'),
+    productManagementRetainCount: normalizeCollectInteger(input.productManagementRetainCount ?? input.retainCount, DEFAULT_PRODUCT_MANAGEMENT_RETAIN_COUNT, 0, MAX_PRODUCT_MANAGEMENT_RETAIN_COUNT, '商品保留数量'),
+    productManagementDryRun: normalizeCollectBoolean(input.productManagementDryRun ?? input.dryRun, false),
+    productManagementStores: normalizeIdList(input.productManagementStores || input.stores),
+  };
+}
+
 function normalizeEditItemSelection(input = {}) {
   const itemSelectionMode = normalizeItemSelectionMode(input.itemSelectionMode);
   if (itemSelectionMode === ITEM_SELECTION_MODE_ALL) {
@@ -595,6 +636,19 @@ function normalizeWeightPaddingGrams(value = DEFAULT_WEIGHT_PADDING_GRAMS) {
   return Number(parsed.toFixed(1));
 }
 
+function normalizeBuyOneTakeOnePriceMarkupPercent(value = DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT) {
+  if (value === '' || value === null || value === undefined) {
+    return DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    throw new Error('买一送一加价比例必须是 0 到 100 之间的数字。');
+  }
+
+  return Number(parsed.toFixed(1));
+}
+
 function normalizeBooleanOption(value, fallback = false) {
   if (typeof value === 'boolean') {
     return value;
@@ -678,6 +732,9 @@ function formatFlashSelectionText(selection = {}) {
 
 function taskLabelForOptions(options = {}) {
   const tasks = options.tasks || {};
+  if (tasks.productManagement) {
+    return '商品管理：上限店铺商品下架';
+  }
   if (tasks.collect) {
     return `商品采集：${options.collectSource === COLLECT_SOURCE_LINKS ? '链接采集' : (options.collectSource || '1688')}，${options.collectCount || options.count || 0} 个`;
   }
@@ -742,6 +799,7 @@ function rememberQueuedRunStartFailure(item, error) {
     sourcePriceExtraCny: input.sourcePriceExtraCny || 0,
     weightPaddingGrams: input.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS,
     buyOneTakeOne: Boolean(input.buyOneTakeOne),
+    buyOneTakeOnePriceMarkupPercent: input.buyOneTakeOnePriceMarkupPercent ?? DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
     processingMode: input.processingMode || PROCESSING_MODE_FAST,
     flashCount: input.flashCount || 0,
     flashSelectionMode: input.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
@@ -753,6 +811,11 @@ function rememberQueuedRunStartFailure(item, error) {
     collectSource: input.collectSource || '',
     collectKeywords: input.collectKeywords || '',
     collectLinks: input.collectLinks || '',
+    productManagementAction: input.productManagementAction || '',
+    productManagementMaxPages: input.productManagementMaxPages || 0,
+    productManagementRetainCount: input.productManagementRetainCount ?? DEFAULT_PRODUCT_MANAGEMENT_RETAIN_COUNT,
+    productManagementDryRun: Boolean(input.productManagementDryRun),
+    productManagementStores: input.productManagementStores || [],
     tasks: input.tasks || {},
     account: item ? item.accountSnapshot : null,
     command: `任务队列：${item && item.label ? item.label : '待执行任务'}`,
@@ -902,6 +965,7 @@ function getPhaseLabel(phase = '') {
     login: '等待登录',
     captcha: '等待验证码',
     collect: '商品采集',
+    productManagement: '商品管理',
     flash: '秒杀活动',
     optimize: '编辑优化',
     sync: '同步站点',
@@ -924,12 +988,13 @@ function updateRunProgress(run, event = {}) {
   run.progress = {
     ...run.progress,
     phase,
-    phaseLabel: getPhaseLabel(phase),
+    phaseLabel: event.phaseLabel || getPhaseLabel(phase),
     completed,
     total,
     totalCount: Number.isFinite(Number(event.totalCount)) ? Number(event.totalCount) : run.progress.totalCount,
     detailId: event.detailId ? String(event.detailId) : run.progress.detailId,
     detailName: event.detailName ? String(event.detailName) : run.progress.detailName,
+    matchedStores: Array.isArray(event.matchedStores) ? event.matchedStores : run.progress.matchedStores,
     overallPercent,
     updatedAt: new Date().toISOString(),
   };
@@ -989,6 +1054,10 @@ function normalizeResultSummary(parsed) {
     return null;
   }
 
+  const failedItems = Array.isArray(parsed.failedItems)
+    ? parsed.failedItems
+    : collectFailedResultItems(parsed.results);
+
   return {
     totalCount: Number.isFinite(Number(parsed.totalCount)) ? Number(parsed.totalCount) : 0,
     successCount: Number.isFinite(Number(parsed.successCount)) ? Number(parsed.successCount) : 0,
@@ -1000,9 +1069,15 @@ function normalizeResultSummary(parsed) {
     duplicateCount: Number.isFinite(Number(parsed.duplicateCount)) ? Number(parsed.duplicateCount) : 0,
     mode: parsed.mode,
     requestedCount: parsed.requestedCount,
+    scannedFailureRecords: Number.isFinite(Number(parsed.scannedFailureRecords)) ? Number(parsed.scannedFailureRecords) : 0,
+    matchedStores: parsed.matchedStores,
+    matchedStoreCount: Number.isFinite(Number(parsed.matchedStoreCount)) ? Number(parsed.matchedStoreCount) : 0,
+    processedStoreCount: Number.isFinite(Number(parsed.processedStoreCount)) ? Number(parsed.processedStoreCount) : 0,
+    unpublishedCount: Number.isFinite(Number(parsed.unpublishedCount)) ? Number(parsed.unpublishedCount) : 0,
+    skippedStores: parsed.skippedStores,
     params: parsed.params,
     results: parsed.results,
-    failedItems: collectFailedResultItems(parsed.results),
+    failedItems,
   };
 }
 
@@ -1127,6 +1202,10 @@ function collectionSummaryHasTargetShortfall(summary) {
 }
 
 function summaryHasErrors(summary) {
+  if (summary && summary.mode === 'product-limit-store-unpublish') {
+    const failedItems = Array.isArray(summary.failedItems) ? summary.failedItems : [];
+    return failedItems.length > 0;
+  }
   if (collectionSummaryReachedTarget(summary)) {
     return false;
   }
@@ -1182,6 +1261,11 @@ function extractProcessErrorMessage(stderrText = '') {
 }
 
 function getSummaryErrorMessage(summary) {
+  if (summary && summary.mode === 'product-limit-store-unpublish') {
+    const failedItems = Array.isArray(summary.failedItems) ? summary.failedItems : [];
+    return `商品管理失败 ${failedItems.length} 项`;
+  }
+
   if (collectionSummaryHasTargetShortfall(summary)) {
     const successCount = Number.isFinite(Number(summary.successCount)) ? Number(summary.successCount) : 0;
     const requestedCount = Number.isFinite(Number(summary.requestedCount)) ? Number(summary.requestedCount) : 0;
@@ -1235,6 +1319,7 @@ function serializeRun(run) {
     sourcePriceExtraCny: run.sourcePriceExtraCny || 0,
     weightPaddingGrams: run.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS,
     buyOneTakeOne: Boolean(run.buyOneTakeOne),
+    buyOneTakeOnePriceMarkupPercent: run.buyOneTakeOnePriceMarkupPercent ?? DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
     processingMode: run.processingMode,
     flashCount: run.flashCount,
     flashSelectionMode: run.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
@@ -1260,6 +1345,11 @@ function serializeRun(run) {
     collectMinScore: run.collectMinScore,
     collectSafeMode: run.collectSafeMode,
     collectLinks: run.collectLinks,
+    productManagementAction: run.productManagementAction || '',
+    productManagementMaxPages: run.productManagementMaxPages || 0,
+    productManagementRetainCount: run.productManagementRetainCount ?? DEFAULT_PRODUCT_MANAGEMENT_RETAIN_COUNT,
+    productManagementDryRun: Boolean(run.productManagementDryRun),
+    productManagementStores: run.productManagementStores || [],
     tasks: run.tasks,
     startedAt: run.startedAt,
     endedAt: run.endedAt,
@@ -1318,6 +1408,7 @@ function rememberRun(run) {
     sourcePriceExtraCny: run.sourcePriceExtraCny || 0,
     weightPaddingGrams: run.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS,
     buyOneTakeOne: Boolean(run.buyOneTakeOne),
+    buyOneTakeOnePriceMarkupPercent: run.buyOneTakeOnePriceMarkupPercent ?? DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
     processingMode: run.processingMode,
     flashCount: run.flashCount,
     flashSelectionMode: run.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
@@ -1342,6 +1433,11 @@ function rememberRun(run) {
     collectMinScore: run.collectMinScore,
     collectSafeMode: run.collectSafeMode,
     collectLinks: run.collectLinks,
+    productManagementAction: run.productManagementAction || '',
+    productManagementMaxPages: run.productManagementMaxPages || 0,
+    productManagementRetainCount: run.productManagementRetainCount ?? DEFAULT_PRODUCT_MANAGEMENT_RETAIN_COUNT,
+    productManagementDryRun: Boolean(run.productManagementDryRun),
+    productManagementStores: run.productManagementStores || [],
     tasks: run.tasks,
     startedAt: run.startedAt,
     endedAt: run.endedAt,
@@ -1363,6 +1459,183 @@ function rememberRun(run) {
   }
   saveRunHistory(history, { limit: MAX_HISTORY_ITEMS });
   scheduleNextQueuedRun();
+}
+
+function startProductManagementRun(options) {
+  ensureCaptchaDir();
+  const accountSummary = serializeMiaoshouAccount(options.account);
+  const action = normalizeProductManagementAction(options.productManagementAction);
+  const maxPages = options.productManagementMaxPages;
+  const retainCount = options.productManagementRetainCount ?? DEFAULT_PRODUCT_MANAGEMENT_RETAIN_COUNT;
+  const stores = Array.isArray(options.productManagementStores) ? options.productManagementStores : [];
+  const args = [
+    PRODUCT_MANAGEMENT_SCRIPT_PATH,
+    '--task',
+    action,
+    '--max-pages',
+    String(maxPages),
+    '--retain-count',
+    String(retainCount),
+  ];
+  let command = `node miaoshou_product_management.js --task unpublish-limit-stores --max-pages ${maxPages} --retain-count ${retainCount}`;
+  if (options.productManagementDryRun) {
+    args.push('--dry-run');
+    command += ' --dry-run';
+  }
+  if (stores.length > 0) {
+    args.push('--stores', stores.join(','));
+    command += ` --stores ${stores.join(',')}`;
+  }
+
+  const run = {
+    id: randomUUID(),
+    count: stores.length,
+    productManagementAction: action,
+    productManagementMaxPages: maxPages,
+    productManagementRetainCount: retainCount,
+    productManagementDryRun: Boolean(options.productManagementDryRun),
+    productManagementStores: stores,
+    tasks: options.tasks || {
+      collect: false,
+      edit: false,
+      flash: false,
+      productManagement: true,
+    },
+    account: accountSummary,
+    command,
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+    durationMs: null,
+    exitCode: null,
+    signal: null,
+    error: '',
+    summary: null,
+    progress: {
+      phase: 'productManagement',
+      phaseLabel: '商品管理',
+      completed: 0,
+      total: stores.length,
+      totalCount: stores.length,
+      detailId: '',
+      detailName: '',
+      matchedStores: [],
+      overallPercent: 0,
+      updatedAt: new Date().toISOString(),
+    },
+    stdout: '',
+    stderr: '',
+    stderrLineBuffer: '',
+    logs: [],
+    captcha: null,
+    child: null,
+  };
+
+  appendLog(run, 'system', `开始执行：${command}`);
+  appendLog(run, 'system', `已选择账号：${accountSummary ? accountSummary.label : '当前账号'}`);
+  appendLog(run, 'system', `上限店铺商品下架：扫描发布失败记录，筛选销量 0 到 0，搜索后切换 100条/页；零销量商品超过 ${retainCount} 个时从最后一页开始下架，直到不超过这个数量。`);
+  if (stores.length > 0) {
+    appendLog(run, 'system', `指定店铺：${stores.join('，')}。`);
+  }
+  if (run.productManagementDryRun) {
+    appendLog(run, 'system', 'Dry-run 模式：只扫描和汇总，不执行下架。');
+  }
+
+  const child = spawn(process.execPath, args, {
+    cwd: __dirname,
+    env: {
+      ...buildChildProcessEnv(options.account),
+      MIAOSHOU_RUN_ID: run.id,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  run.child = child;
+  currentRun = run;
+
+  child.stdout.on('data', (chunk) => {
+    const text = chunk.toString('utf8');
+    run.stdout += text;
+    appendLog(run, 'stdout', text);
+  });
+
+  child.stderr.on('data', (chunk) => {
+    const text = chunk.toString('utf8');
+    run.stderr += text;
+    processStderrChunk(run, text);
+  });
+
+  child.on('error', (error) => {
+    if (finalizeStoppedRun(run)) {
+      return;
+    }
+    run.status = 'error';
+    run.error = error.message || String(error);
+    run.endedAt = new Date().toISOString();
+    run.durationMs = new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime();
+    updateRunProgress(run, {
+      phase: 'error',
+      completed: run.progress.completed,
+      total: run.progress.total,
+      totalCount: run.progress.totalCount,
+      overallPercent: run.progress.overallPercent,
+    });
+    appendLog(run, 'stderr', run.error);
+    rememberRun(run);
+  });
+
+  child.on('close', (code, signal) => {
+    if (run.stderrLineBuffer) {
+      processStderrChunk(run, '\n');
+    }
+    run.exitCode = code;
+    run.signal = signal;
+    run.endedAt = new Date().toISOString();
+    run.durationMs = new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime();
+    run.summary = tryParseResult(run);
+    if (finalizeStoppedRun(run)) {
+      return;
+    }
+    const resultHasErrors = summaryHasErrors(run.summary);
+    run.status = code === 0 && !resultHasErrors && !signal ? 'success' : 'error';
+    if (run.status === 'success') {
+      const completedStoreCount = run.summary && Number.isFinite(Number(run.summary.processedStoreCount))
+        ? Number(run.summary.processedStoreCount)
+        : stores.length;
+      const matchedStoreCount = run.summary && Number.isFinite(Number(run.summary.matchedStoreCount))
+        ? Number(run.summary.matchedStoreCount)
+        : stores.length;
+      updateRunProgress(run, {
+        phase: 'complete',
+        completed: completedStoreCount,
+        total: matchedStoreCount,
+        totalCount: matchedStoreCount,
+        overallPercent: 100,
+      });
+    } else {
+      updateRunProgress(run, {
+        phase: 'error',
+        completed: run.progress.completed,
+        total: run.progress.total,
+        totalCount: run.progress.totalCount,
+        overallPercent: run.progress.overallPercent,
+      });
+    }
+    if (signal) {
+      run.error = `进程已停止：${signal}`;
+    } else if (resultHasErrors) {
+      run.error = getSummaryErrorMessage(run.summary);
+    } else if (code !== 0) {
+      run.error = extractProcessErrorMessage(run.stderr) || `退出码：${code}`;
+    }
+    appendLog(
+      run,
+      run.status === 'success' ? 'system' : 'stderr',
+      run.status === 'success' ? '商品管理执行完成。' : `商品管理执行失败：${run.error || `退出码：${code}`}`,
+    );
+    rememberRun(run);
+  });
+
+  return run;
 }
 
 function startFlashOnlyRun(options) {
@@ -1872,6 +2145,10 @@ function startChainedFlashRun(run, account) {
 }
 
 function startRun(options) {
+  if (options.tasks && options.tasks.productManagement) {
+    return startProductManagementRun(options);
+  }
+
   if (options.tasks && options.tasks.collect && !options.tasks.edit && !options.tasks.flash) {
     return startCollectRun(options);
   }
@@ -1902,6 +2179,8 @@ function startRun(options) {
     String(options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS),
     '--buy-one-take-one',
     options.buyOneTakeOne ? 'true' : 'false',
+    '--buy-one-take-one-price-markup-percent',
+    String(options.buyOneTakeOnePriceMarkupPercent ?? DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT),
   ];
   if (Array.isArray(options.detailIds) && options.detailIds.length > 0) {
     args.push('--detail-ids', options.detailIds.join(','));
@@ -1910,7 +2189,7 @@ function startRun(options) {
   const detailIdsCommand = Array.isArray(options.detailIds) && options.detailIds.length > 0
     ? ` --detail-ids ${options.detailIds.join(',')}`
     : '';
-  const command = `node miaoshou_auto.js --count ${options.count} --item-selection-mode ${itemSelectionMode} --item-start-index ${options.itemStartIndex || 1} --item-end-index ${options.itemEndIndex || options.count || 1} --publish ${options.publish ? 'true' : 'false'} --source-price-extra ${options.sourcePriceExtraCny || 0} --weight-padding-grams ${options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS} --buy-one-take-one ${options.buyOneTakeOne ? 'true' : 'false'}${detailIdsCommand}`;
+  const command = `node miaoshou_auto.js --count ${options.count} --item-selection-mode ${itemSelectionMode} --item-start-index ${options.itemStartIndex || 1} --item-end-index ${options.itemEndIndex || options.count || 1} --publish ${options.publish ? 'true' : 'false'} --source-price-extra ${options.sourcePriceExtraCny || 0} --weight-padding-grams ${options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS} --buy-one-take-one ${options.buyOneTakeOne ? 'true' : 'false'} --buy-one-take-one-price-markup-percent ${options.buyOneTakeOnePriceMarkupPercent ?? DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT}${detailIdsCommand}`;
   const run = {
     id: randomUUID(),
     count: options.count,
@@ -1922,6 +2201,7 @@ function startRun(options) {
     sourcePriceExtraCny: options.sourcePriceExtraCny || 0,
     weightPaddingGrams: options.weightPaddingGrams ?? DEFAULT_WEIGHT_PADDING_GRAMS,
     buyOneTakeOne: Boolean(options.buyOneTakeOne),
+    buyOneTakeOnePriceMarkupPercent: options.buyOneTakeOnePriceMarkupPercent ?? DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
     flashCount: options.flashCount,
     flashSelectionMode: options.flashSelectionMode || FLASH_SELECTION_MODE_COUNT,
     flashActivityIds: options.flashActivityIds || [],
@@ -1967,7 +2247,7 @@ function startRun(options) {
   }
   appendLog(run, 'system', `重量额外加重：${run.weightPaddingGrams}g。`);
   if (run.buyOneTakeOne) {
-    appendLog(run, 'system', '单 SKU Buy 1 Take 1 已开启。');
+    appendLog(run, 'system', `单 SKU Buy 1 Take 1 已开启，加价比例：${run.buyOneTakeOnePriceMarkupPercent}%。`);
   }
   if (accountSummary) {
     appendLog(run, 'system', `使用账号：${accountSummary.label}`);

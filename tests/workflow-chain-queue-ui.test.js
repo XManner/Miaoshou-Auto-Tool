@@ -53,7 +53,9 @@ assert.ok(
     && productConfirmationFunction.includes('SKU 重量额外加重')
     && productConfirmationFunction.includes('weightPaddingGrams')
     && productConfirmationFunction.includes('买一送一规格')
-    && productConfirmationFunction.includes("productForm.buyOneTakeOne ? '添加' : '不添加'"),
+    && productConfirmationFunction.includes("productForm.buyOneTakeOne ? '添加' : '不添加'")
+    && productConfirmationFunction.includes('买一送一加价比例')
+    && productConfirmationFunction.includes('productBuyOneTakeOneMarkupPercent()'),
   'Product confirmation details should include price markup, SKU weight padding, and buy-one-take-one setting.',
 );
 assert.ok(

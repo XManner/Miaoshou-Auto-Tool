@@ -59,13 +59,26 @@ assert.strictEqual(singleSkuOfferValue.attrValue, 'Buy 1 Take 1');
 assert.strictEqual(singleSkuOfferValue.imgUrl, 'https://img.example/pink.jpg');
 assert.deepStrictEqual(singleSkuOfferValue.supplementarySkuImageUrls, ['https://img.example/pink-extra.jpg']);
 assert.ok(singleSkuOfferValue.attrValueId && singleSkuOfferValue.attrValueId !== 'default');
-assert.strictEqual(Number(singleSkuOfferSku.originPrice), 17);
+assert.strictEqual(Number(singleSkuOfferSku.originPrice), 16.15);
 assert.strictEqual(Number(singleSkuOfferSku.weight), 0.24);
 assert.strictEqual(singleSkuOfferSku.itemNum, 'SKU-1-B1T1');
 assert.deepStrictEqual(
   singleSkuOfferSku.shopIdToWarehouseIdAndStockMap,
   { shopA: { warehouseA: '66' } },
   'Offer SKU should preserve the default SKU warehouse stock mapping.',
+);
+
+const customMarkupResult = auto.applyBuyOneTakeOneOfferToPreparedItem(singleSkuItem, {
+  enabled: true,
+  maxTitleLength: 180,
+  priceMarkupPercent: 100,
+});
+const customMarkupOfferValue = customMarkupResult.itemInfo.skuPropertyList[0].attrValueList[1];
+const customMarkupOfferSku = customMarkupResult.itemInfo.skuMap[`;${customMarkupOfferValue.attrValueId};`];
+assert.strictEqual(
+  Number(customMarkupOfferSku.originPrice),
+  17,
+  'Buy 1 Take 1 price should use base price plus the configured markup percent.',
 );
 
 const mainImageFallbackResult = auto.applyBuyOneTakeOneOfferToPreparedItem({
@@ -141,14 +154,29 @@ assert.strictEqual(alreadyPrefixed.itemInfo.title, 'Buy 1 Take 1 Soft Makeup Spo
 assert.strictEqual(parseArgs(['--buy-one-take-one']).buyOneTakeOne, true);
 assert.strictEqual(parseArgs(['--buy-one-take-one', 'false']).buyOneTakeOne, false);
 assert.strictEqual(parseArgs([]).buyOneTakeOne, false);
+assert.strictEqual(parseArgs([]).buyOneTakeOnePriceMarkupPercent, 90);
+assert.strictEqual(
+  parseArgs(['--buy-one-take-one-price-markup-percent', '90']).buyOneTakeOnePriceMarkupPercent,
+  90,
+);
 
 assert.ok(
   appSource.includes('buyOneTakeOne: false'),
   'Product form should default Buy 1 Take 1 to off.',
 );
 assert.ok(
+  appSource.includes('buyOneTakeOnePriceMarkupPercent: 90'),
+  'Product form should default Buy 1 Take 1 markup percent to 90.',
+);
+assert.ok(
   appSource.includes('v-model:value="productForm.buyOneTakeOne"'),
   'Run page should expose Buy 1 Take 1 as a button-style choice.',
+);
+assert.ok(
+  appSource.includes('v-if="productForm.buyOneTakeOne"')
+    && appSource.includes('v-model:value="productForm.buyOneTakeOnePriceMarkupPercent"')
+    && appSource.includes('加价比例'),
+  'Run page should reveal a markup percent input only when Buy 1 Take 1 is enabled.',
 );
 assert.ok(
   appSource.includes('label="单 SKU 增加买一送一规格" class="form-section form-section-offer"'),
@@ -175,6 +203,10 @@ assert.ok(
   'Run page should send the Buy 1 Take 1 flag to /api/run.',
 );
 assert.ok(
+  appSource.includes('buyOneTakeOnePriceMarkupPercent: Number(productForm.buyOneTakeOnePriceMarkupPercent || 90)'),
+  'Run page should send the Buy 1 Take 1 markup percent to /api/run.',
+);
+assert.ok(
   webSource.includes('buyOneTakeOne'),
   'Web server should normalize and store the Buy 1 Take 1 flag.',
 );
@@ -183,8 +215,17 @@ assert.ok(
   'Web server should pass the Buy 1 Take 1 flag to miaoshou_auto.js.',
 );
 assert.ok(
+  webSource.includes('buyOneTakeOnePriceMarkupPercent')
+    && webSource.includes("'--buy-one-take-one-price-markup-percent'"),
+  'Web server should normalize, store, and pass the Buy 1 Take 1 markup percent.',
+);
+assert.ok(
   cliSource.includes("arg === '--buy-one-take-one'"),
   'CLI should accept --buy-one-take-one.',
+);
+assert.ok(
+  cliSource.includes("arg === '--buy-one-take-one-price-markup-percent'"),
+  'CLI should accept --buy-one-take-one-price-markup-percent.',
 );
 assert.ok(
   autoSource.includes('buyOneTakeOne'),

@@ -98,12 +98,17 @@ const skuList = imagePolicy.applySkuImagePolicyToPropertyList([
   {
     attrName: 'Color',
     attrValueList: [
-      { attrValue: 'Red', supplementarySkuImageUrls: [coupon] },
-      { attrValue: 'Blue', supplementarySkuImageUrls: [main2] },
+      { attrValue: 'Red', imgUrl: coupon, supplementarySkuImageUrls: [coupon] },
+      { attrValue: 'Blue', imgUrl: main2, supplementarySkuImageUrls: [main2] },
     ],
   },
 ], { itemInfo, imagePlan, verdictMap });
 
+assert.deepStrictEqual(
+  skuList[0].attrValueList.map((value) => value.imgUrl),
+  [imagePolicy.normalizeImageUrl(whiteDetail), main2],
+  'SKU image policy should replace irrelevant attr value imgUrl and keep already-safe attr value imgUrl.',
+);
 assert.deepStrictEqual(
   skuList[0].attrValueList.map((value) => value.supplementarySkuImageUrls),
   [[whiteDetail], [main2]],

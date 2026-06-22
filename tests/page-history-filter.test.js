@@ -10,6 +10,16 @@ assert.ok(
 );
 
 assert.ok(
+  /function historyPageForRun\(run\) \{[\s\S]*if \(runHasProductManagementTask\(run\)\) \{[\s\S]*return NAV_PRODUCT_LIMIT_KEY;[\s\S]*\}[\s\S]*return 'products';[\s\S]*\}/.test(appSource),
+  'Product-limit cleanup history should be assigned to the independent products-limit-stores page.',
+);
+
+assert.ok(
+  /if \(page === NAV_PRODUCT_LIMIT_KEY\) \{[\s\S]*return hasProductManagement && !hasCollect && !hasEdit && !hasFlash;[\s\S]*\}[\s\S]*if \(page === 'products'\) \{[\s\S]*return hasEdit && !hasProductManagement/.test(appSource),
+  'Edit-product and product-limit runs should not match the same page history filter.',
+);
+
+assert.ok(
   /const filteredVisibleHistory = computed\(\(\) => \([\s\S]*visibleHistory\.value\.filter\(\(run\) => historyStatusMatches\(run, historyStatusFilter\.value\)\)[\s\S]*\)\);/.test(appSource)
     && /const hasVisibleHistory = computed\(\(\) => filteredVisibleHistory\.value\.length > 0\);/.test(appSource),
   'The shared recent task history panel should apply the status filter before empty and clear states.',

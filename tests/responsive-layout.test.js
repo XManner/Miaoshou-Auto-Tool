@@ -105,7 +105,7 @@ assert.ok(
 assert.ok(
   /\.product-panel \.form-section-mode\s*\{[^}]*grid-column:\s*1 \/ span 2;[^}]*grid-row:\s*1;/.test(styles)
     && /\.product-panel \.form-section-pricing\s*\{[^}]*grid-column:\s*3 \/ span 4;[^}]*grid-row:\s*1;/.test(styles)
-    && /\.product-panel \.form-section-offer\s*\{[^}]*grid-column:\s*7 \/ span 2;[^}]*grid-row:\s*1;/.test(styles),
+    && /\.product-panel \.form-section-offer\s*\{[^}]*grid-column:\s*7 \/ span 4;[^}]*grid-row:\s*1;/.test(styles),
   'Product edit first row should start with processing mode and keep pricing plus offer controls together.',
 );
 assert.ok(

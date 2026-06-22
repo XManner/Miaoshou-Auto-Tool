@@ -148,22 +148,65 @@ body {
   background: transparent;
 }
 
-.top-menu.ant-menu-horizontal > .ant-menu-item {
+.top-menu.ant-menu-horizontal > .ant-menu-item,
+.top-menu.ant-menu-horizontal > .ant-menu-submenu {
   height: 46px;
   margin: 0 4px;
-  padding-inline: 24px;
   border-radius: 14px;
   color: var(--app-muted);
   line-height: 46px;
 }
 
-.top-menu.ant-menu-horizontal > .ant-menu-item::after {
+.top-menu.ant-menu-horizontal > .ant-menu-item {
+  padding-inline: 24px;
+}
+
+.top-menu.ant-menu-horizontal > .ant-menu-submenu {
+  padding-inline: 0;
+}
+
+.top-menu.ant-menu-horizontal > .ant-menu-submenu > .ant-menu-submenu-title {
+  height: 46px;
+  margin: 0;
+  padding-inline: 24px;
+  color: inherit;
+  line-height: 46px;
+}
+
+.top-menu.ant-menu-horizontal > .ant-menu-item::after,
+.top-menu.ant-menu-horizontal > .ant-menu-submenu::after {
   display: none;
 }
 
-.top-menu.ant-menu-horizontal > .ant-menu-item-selected {
+.top-menu.ant-menu-horizontal > .ant-menu-item-selected,
+.top-menu.ant-menu-horizontal > .ant-menu-submenu-selected {
   color: var(--app-primary);
   background: color-mix(in srgb, var(--app-primary) 10%, #fff);
+}
+
+.top-submenu-popup .ant-menu {
+  min-width: 144px;
+  padding: 6px;
+  border-radius: 12px;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+}
+
+.top-submenu-popup .ant-menu-item {
+  height: 38px;
+  margin: 2px 0;
+  border-radius: 8px;
+  line-height: 38px;
+}
+
+.top-submenu-popup .ant-menu-item-selected {
+  color: var(--app-primary);
+  background: color-mix(in srgb, var(--app-primary) 10%, #fff);
+}
+
+:root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item-selected,
+:root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-submenu-selected {
+  color: #fff !important;
+  background: rgba(255, 77, 79, 0.16) !important;
 }
 
 :root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item-selected {
@@ -171,12 +214,24 @@ body {
   background: rgba(255, 77, 79, 0.16) !important;
 }
 
+:root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-submenu-selected {
+  color: #fff !important;
+  background: rgba(255, 77, 79, 0.16) !important;
+}
+
+:root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item:hover,
+:root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-submenu:hover {
+  color: #fff !important;
+  background: rgba(255, 77, 79, 0.12) !important;
+}
+
 :root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item:hover {
   color: #fff !important;
   background: rgba(255, 77, 79, 0.12) !important;
 }
 
-:root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item-active {
+:root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item-active,
+:root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-submenu-active {
   color: #fff !important;
   background: rgba(255, 77, 79, 0.12) !important;
 }
@@ -563,6 +618,14 @@ body {
   grid-column: 1 / -1;
 }
 
+.product-management-tabs {
+  margin-top: 0;
+}
+
+.product-management-tabs .ant-tabs-nav {
+  margin-bottom: 18px;
+}
+
 .product-panel .form-section-mode {
   grid-column: 1 / span 2;
   grid-row: 1;
@@ -589,8 +652,36 @@ body {
 }
 
 .product-panel .form-section-offer {
-  grid-column: 7 / span 2;
+  grid-column: 7 / span 4;
   grid-row: 1;
+}
+
+.offer-control-stack {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.offer-markup-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.offer-markup-label {
+  flex: 0 0 auto;
+  color: var(--app-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 32px;
+  white-space: nowrap;
+}
+
+.offer-markup-input {
+  width: 120px;
 }
 
 .product-panel .form-section-switches {
@@ -622,6 +713,97 @@ body {
 
 .product-panel .equal-radio-group .ant-radio-button-wrapper {
   min-width: 0;
+}
+
+.limit-store-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.limit-store-panel .ant-alert {
+  margin-bottom: 0;
+}
+
+.limit-store-panel textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.limit-store-panel .form-section-summary {
+  grid-column: 1 / -1;
+}
+
+.limit-store-number-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 180px));
+  gap: 16px 24px;
+  align-items: start;
+}
+
+.limit-store-number-row .ant-form-item {
+  margin-bottom: 0;
+}
+
+.limit-store-scan-pages .ant-input-number,
+.limit-store-retain-count .ant-input-number {
+  max-width: 180px;
+}
+
+.limit-store-preview-card {
+  grid-column: 1 / -1;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.limit-store-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: var(--app-text);
+}
+
+.limit-store-preview-head span {
+  color: var(--app-muted);
+  font-size: 13px;
+}
+
+.limit-store-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.limit-store-preview-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--app-primary) 10%, var(--app-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-primary) 3%, #fff);
+}
+
+.limit-store-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.limit-store-meta {
+  flex: 0 0 auto;
+  color: var(--app-muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .collect-panel .equal-radio-group {
@@ -1646,6 +1828,10 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .limit-store-number-row {
+    grid-template-columns: 1fr;
+  }
+
   .theme-select,
   .form-actions .ant-btn,
   .shortcut-grid .ant-btn,
@@ -1662,7 +1848,8 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .top-menu.ant-menu-horizontal > .ant-menu-item {
+  .top-menu.ant-menu-horizontal > .ant-menu-item,
+  .top-menu.ant-menu-horizontal > .ant-menu-submenu > .ant-menu-submenu-title {
     padding-inline: 14px;
   }
 

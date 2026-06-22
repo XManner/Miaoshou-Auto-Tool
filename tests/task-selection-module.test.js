@@ -19,7 +19,7 @@ assert.ok(
   'The page should load Day.js before Ant Design Vue.',
 );
 assert.ok(
-  appSource.includes('mode="horizontal" class="top-menu"'),
+  /<a-menu[\s\S]*mode="horizontal"[\s\S]*class="top-menu"/.test(appSource),
   'The Vue app should use an Ant Design Vue top navigation layout.',
 );
 assert.ok(
@@ -28,11 +28,14 @@ assert.ok(
 );
 assert.ok(appSource.includes('首页'), 'Navigation should include 首页.');
 assert.ok(appSource.includes('商品采集'), 'Navigation should include 商品采集.');
-assert.ok(appSource.includes('编辑商品'), 'Navigation should include 编辑商品.');
+assert.ok(appSource.includes('商品管理'), 'Navigation should include 商品管理.');
+assert.ok(appSource.includes('<a-card v-if="currentPage === \'products\'" title="编辑商品"'), 'Product edit should have an independent page.');
+assert.ok(appSource.includes('<a-card v-if="currentPage === NAV_PRODUCT_LIMIT_KEY" title="上限店铺商品下架"'), 'Product limit cleanup should have an independent page.');
+assert.ok(appSource.includes('<a-menu-item key="products-limit-stores">下架商品</a-menu-item>'), 'Product management submenu should include 下架商品.');
 assert.ok(appSource.includes('秒杀管理'), 'Navigation should include 秒杀管理.');
 assert.ok(
-  /<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>/.test(appSource),
-  'Navigation should be ordered as 首页 | 商品采集 | 编辑商品 | 秒杀管理.',
+  /<a-menu[\s\S]*trigger-sub-menu-action="hover"[\s\S]*<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-sub-menu key="product-management"[\s\S]*<template #title>商品管理<\/template>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="products-limit-stores">下架商品<\/a-menu-item>[\s\S]*<\/a-sub-menu>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>/.test(appSource),
+  'Navigation should keep only product management as a hover submenu with edit and offline entries.',
 );
 assert.ok(
   appSource.includes('src="/assets/tiktok-shop-logo.png"')
@@ -137,6 +140,7 @@ assert.ok(
 );
 assert.ok(
   appSource.includes("currentPage === 'products'")
+    && appSource.includes('currentPage === NAV_PRODUCT_LIMIT_KEY')
     && appSource.includes('startProductRun')
     && appSource.includes("currentPage === 'flash'")
     && appSource.includes('startFlashRun'),

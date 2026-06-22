@@ -18,6 +18,7 @@ const editRun = {
   sourcePriceExtraCny: 4,
   weightPaddingGrams: 30,
   buyOneTakeOne: true,
+  buyOneTakeOnePriceMarkupPercent: 90,
   summary: {
     failedItems: [
       { detailId: '101', error: '标题优化失败' },
@@ -34,6 +35,7 @@ assert.strictEqual(editInput.count, 2);
 assert.strictEqual(editInput.publish, true);
 assert.strictEqual(editInput.processingMode, 'precise');
 assert.strictEqual(editInput.buyOneTakeOne, true);
+assert.strictEqual(editInput.buyOneTakeOnePriceMarkupPercent, 90);
 assert.strictEqual(editInput.retrySourceRunId, 'edit-failed');
 
 const flashRun = {

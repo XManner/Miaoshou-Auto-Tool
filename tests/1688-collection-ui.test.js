@@ -23,12 +23,13 @@ assert.ok(
   'Collection fixed-width button groups should be wider than the product edit controls.',
 );
 assert.ok(
-  appSource.includes("products: '编辑商品'"),
-  'The product editing page should be labeled 编辑商品.',
+  appSource.includes("products: '编辑商品'")
+    && appSource.includes('<a-card v-if="currentPage === \'products\'" title="编辑商品"'),
+  'The product editing workflow should live on the independent 编辑商品 page.',
 );
 assert.ok(
-  /<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>/.test(appSource),
-  'Navigation order should be 首页 | 商品采集 | 编辑商品 | 秒杀管理.',
+  /<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-sub-menu key="product-management"[\s\S]*<template #title>商品管理<\/template>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="products-limit-stores">下架商品<\/a-menu-item>[\s\S]*<\/a-sub-menu>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>/.test(appSource),
+  'Navigation order should be 首页 | 商品采集 | 商品管理 | 秒杀管理.',
 );
 assert.ok(
   appSource.includes('const collectForm = reactive({'),

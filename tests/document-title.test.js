@@ -36,6 +36,7 @@ assert.ok(
   ['home', '首页'],
   ['collect', '商品采集'],
   ['products', '编辑商品'],
+  ["['products-limit-stores']", '上限店铺商品下架'],
   ['flash', '秒杀管理'],
   ['config', '账户配置'],
 ].forEach(([page, title]) => {

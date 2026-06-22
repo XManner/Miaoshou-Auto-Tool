@@ -50,7 +50,10 @@ const {
   normalizeWeightUnitToKg,
   resolveFallbackWeight,
 } = require('./lib/gross_weight_rules');
-const { parseArgs } = require('./lib/cli_args');
+const {
+  parseArgs,
+  normalizeBuyOneTakeOnePriceMarkupPercent,
+} = require('./lib/cli_args');
 const {
   SENSITIVE_WORDS,
   ensureOptimizedTitleMinLength,
@@ -174,6 +177,7 @@ const DEFAULT_SKU_WEIGHT_PADDING_GRAMS = Math.max(
   parseNumber(process.env.SKU_WEIGHT_PADDING_GRAMS, 30),
 );
 const BUY_ONE_TAKE_ONE_LABEL = 'Buy 1 Take 1';
+const DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT = normalizeBuyOneTakeOnePriceMarkupPercent();
 const DEFAULT_EXTERNAL_FETCH_TIMEOUT_MS = parsePositiveInteger(process.env.EXTERNAL_FETCH_TIMEOUT_MS, 12000);
 const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_MS = parsePositiveInteger(process.env.IMAGE_DOWNLOAD_TIMEOUT_MS, 12000);
 const ENABLE_1688_IMAGE_SOURCE_PRICE_LOOKUP = String(process.env.ENABLE_1688_IMAGE_SOURCE_PRICE_LOOKUP || '1') !== '0';
@@ -1358,9 +1362,13 @@ function buildBuyOneTakeOneSkuKey(defaultSkuKey = '', defaultAttrValueId = '', o
   return `;${nextTokens.join(';')};`;
 }
 
-function doublePositiveCurrency(value) {
+function applyBuyOneTakeOneCurrencyMarkup(value, priceMarkupPercent = DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT) {
   const normalized = normalizeCurrencyCny(value, null);
-  return normalized ? normalizeCurrencyCny(normalized * 2, value) : value;
+  if (!normalized) {
+    return value;
+  }
+  const normalizedPercent = normalizeBuyOneTakeOnePriceMarkupPercent(priceMarkupPercent);
+  return normalizeCurrencyCny(normalized * (1 + (normalizedPercent / 100)), value);
 }
 
 function doublePositiveWeight(value) {
@@ -1372,6 +1380,7 @@ function applyBuyOneTakeOneOfferToPreparedItem(itemInfo = {}, {
   enabled = false,
   maxTitleLength = DEFAULT_TITLE_MAX_LENGTH,
   originalSkuCount = null,
+  priceMarkupPercent = DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
 } = {}) {
   if (!enabled) {
     return {
@@ -1477,7 +1486,7 @@ function applyBuyOneTakeOneOfferToPreparedItem(itemInfo = {}, {
   const offerSkuValue = {
     ...cloneJson(defaultSkuValue),
     itemNum: defaultItemNum ? `${defaultItemNum}-B1T1` : 'B1T1',
-    originPrice: doublePositiveCurrency(defaultSkuValue && defaultSkuValue.originPrice),
+    originPrice: applyBuyOneTakeOneCurrencyMarkup(defaultSkuValue && defaultSkuValue.originPrice, priceMarkupPercent),
     weight: doublePositiveWeight(defaultSkuValue && defaultSkuValue.weight),
     shopIdToWarehouseIdAndStockMap: cloneJson(
       defaultSkuValue && defaultSkuValue.shopIdToWarehouseIdAndStockMap
@@ -2177,6 +2186,7 @@ function buildPreparedSiteCollectItemInfo(
     preparedSpec,
     addWeightPadding = true,
     buyOneTakeOne = false,
+    buyOneTakeOnePriceMarkupPercent = DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
   } = {},
 ) {
   const simplifiedSpec = preparedSpec || buildNormalizedPreparedSpec(siteCollectItemInfo);
@@ -2248,6 +2258,7 @@ function buildPreparedSiteCollectItemInfo(
     enabled: Boolean(buyOneTakeOne),
     maxTitleLength,
     originalSkuCount,
+    priceMarkupPercent: buyOneTakeOnePriceMarkupPercent,
   });
 
   const preparedWithDefaults = sanitizeOptionalFields(withDeliveryOptionDefaults(offerPrepared.itemInfo));
@@ -4295,6 +4306,7 @@ async function buildUpdatedTitleSiteCollectItemInfo(
     sourcePriceExtraCny = 0,
     skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
     buyOneTakeOne = false,
+    buyOneTakeOnePriceMarkupPercent = DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
   } = {},
 ) {
   const data = apiData && apiData.data ? apiData.data : apiData;
@@ -4339,6 +4351,7 @@ async function buildUpdatedTitleSiteCollectItemInfo(
     preparedSpec: normalizedPreparedSpec,
     addWeightPadding: shouldAddWeightPadding,
     buyOneTakeOne,
+    buyOneTakeOnePriceMarkupPercent,
   });
   const updatedInfo = prepared.siteCollectItemInfo;
   const newTitle = updatedInfo.title;
@@ -5701,6 +5714,7 @@ async function optimizeQueriedItemTitles({
   sourcePriceExtraCny = 0,
   skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
   buyOneTakeOne = false,
+  buyOneTakeOnePriceMarkupPercent = DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
   onProgress = null,
 } = {}) {
   if (!site) {
@@ -5953,6 +5967,7 @@ async function optimizeQueriedItemTitles({
             sourcePriceExtraCny,
             skuWeightPaddingGrams,
             buyOneTakeOne,
+            buyOneTakeOnePriceMarkupPercent,
           },
         );
         const claimSelectionChanged = Boolean(ensuredShops.claimSelectionChanged)
@@ -5989,6 +6004,7 @@ async function optimizeQueriedItemTitles({
           sourcePriceExtraCny: normalizeSourcePriceExtraCny(sourcePriceExtraCny),
           skuWeightPaddingGrams: normalizeSkuWeightPaddingGrams(skuWeightPaddingGrams),
           buyOneTakeOne: Boolean(buyOneTakeOne),
+          buyOneTakeOnePriceMarkupPercent: normalizeBuyOneTakeOnePriceMarkupPercent(buyOneTakeOnePriceMarkupPercent),
           oldSpecDimension,
           newSpecDimension,
           removedSecondSpec,
@@ -6387,6 +6403,7 @@ async function editAndPublishCollectBoxItems({
   sourcePriceExtraCny = 0,
   skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
   buyOneTakeOne = false,
+  buyOneTakeOnePriceMarkupPercent = DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
   onProgress = null,
 } = {}) {
   const normalizedSite = String(site || '').toUpperCase();
@@ -6470,6 +6487,7 @@ async function editAndPublishCollectBoxItems({
     sourcePriceExtraCny,
     skuWeightPaddingGrams,
     buyOneTakeOne,
+    buyOneTakeOnePriceMarkupPercent,
     onProgress: emitWorkflowProgress,
   });
 
@@ -6688,6 +6706,7 @@ async function runDefaultEditWorkflow({
   sourcePriceExtraCny = 0,
   skuWeightPaddingGrams = DEFAULT_SKU_WEIGHT_PADDING_GRAMS,
   buyOneTakeOne = false,
+  buyOneTakeOnePriceMarkupPercent = DEFAULT_BUY_ONE_TAKE_ONE_PRICE_MARKUP_PERCENT,
   onProgress = null,
 } = {}) {
   const normalizedDetailIds = uniqueIdList(detailIds);
@@ -6727,6 +6746,7 @@ async function runDefaultEditWorkflow({
     sourcePriceExtraCny,
     skuWeightPaddingGrams,
     buyOneTakeOne,
+    buyOneTakeOnePriceMarkupPercent,
     onProgress,
     searchParams,
   });
@@ -6745,6 +6765,7 @@ async function runDefaultEditWorkflow({
       sourcePriceExtraCny: normalizeSourcePriceExtraCny(sourcePriceExtraCny),
       skuWeightPaddingGrams: normalizeSkuWeightPaddingGrams(skuWeightPaddingGrams),
       buyOneTakeOne: Boolean(buyOneTakeOne),
+      buyOneTakeOnePriceMarkupPercent: normalizeBuyOneTakeOnePriceMarkupPercent(buyOneTakeOnePriceMarkupPercent),
     },
     ...result,
   };
@@ -6790,6 +6811,7 @@ async function main() {
       sourcePriceExtraCny: args.sourcePriceExtraCny,
       skuWeightPaddingGrams: args.skuWeightPaddingGrams,
       buyOneTakeOne: args.buyOneTakeOne,
+      buyOneTakeOnePriceMarkupPercent: args.buyOneTakeOnePriceMarkupPercent,
       onProgress,
     });
     console.log(JSON.stringify(result, null, 2));
@@ -6833,6 +6855,7 @@ async function main() {
       sourcePriceExtraCny: args.sourcePriceExtraCny,
       skuWeightPaddingGrams: args.skuWeightPaddingGrams,
       buyOneTakeOne: args.buyOneTakeOne,
+      buyOneTakeOnePriceMarkupPercent: args.buyOneTakeOnePriceMarkupPercent,
       searchParams: {
         pageNo: args.pageNo,
         pageSize: args.pageSize,
@@ -6978,6 +7001,7 @@ async function main() {
       sourcePriceExtraCny: args.sourcePriceExtraCny,
       skuWeightPaddingGrams: args.skuWeightPaddingGrams,
       buyOneTakeOne: args.buyOneTakeOne,
+      buyOneTakeOnePriceMarkupPercent: args.buyOneTakeOnePriceMarkupPercent,
       onProgress,
       searchParams: {
         pageNo: args.pageNo,

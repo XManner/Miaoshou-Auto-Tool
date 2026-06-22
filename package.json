@@ -8,7 +8,7 @@
     "web": "node web_server.js",
     "test": "node tests/run-all.js",
     "test:unit": "node tests/run-all.js",
-    "check": "node --check miaoshou_auto.js && node --check miaoshou_flash_sale.js && node --check miaoshou_1688_collect.js && node --check web_server.js",
+    "check": "node --check miaoshou_auto.js && node --check miaoshou_flash_sale.js && node --check miaoshou_1688_collect.js && node --check miaoshou_product_management.js && node --check lib/product_limit_store_cleanup.js && node --check lib/miaoshou_login.js && node --check web_server.js",
     "dry": "node miaoshou_auto.js --publish false",
     "publish": "node miaoshou_auto.js --publish true"
   },

@@ -20,6 +20,9 @@ const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'
   ':root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item:hover',
   ':root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item-active',
   ':root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-item-selected',
+  ':root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-submenu:hover',
+  ':root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-submenu-active',
+  ':root[data-theme="tech"] .top-menu.ant-menu-horizontal > .ant-menu-submenu-selected',
   ':root[data-theme="tech"] .mode-button-group .ant-btn-default',
   ':root[data-theme="tech"] .ant-btn-primary:disabled',
   ':root[data-theme="tech"] .brand-logo',
@@ -45,7 +48,8 @@ assert.ok(
 );
 assert.ok(
   /:root\[data-theme="tech"\]\s+\.top-menu\.ant-menu-horizontal\s*>\s*\.ant-menu-item:hover\s*\{[\s\S]*color:\s*#fff\s*!important/.test(styles)
-    && /:root\[data-theme="tech"\]\s+\.top-menu\.ant-menu-horizontal\s*>\s*\.ant-menu-item-selected\s*\{[\s\S]*color:\s*#fff\s*!important/.test(styles),
+    && /:root\[data-theme="tech"\]\s+\.top-menu\.ant-menu-horizontal\s*>\s*\.ant-menu-item-selected\s*\{[\s\S]*color:\s*#fff\s*!important/.test(styles)
+    && /:root\[data-theme="tech"\]\s+\.top-menu\.ant-menu-horizontal\s*>\s*\.ant-menu-submenu-selected\s*\{[\s\S]*color:\s*#fff\s*!important/.test(styles),
   'Tech theme navigation hover and selected states should keep text readable.',
 );
 assert.ok(

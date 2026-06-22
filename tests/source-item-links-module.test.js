@@ -75,6 +75,7 @@ assert.deepStrictEqual(
     {
       attrValueList: [
         {
+          imgUrl: 'https://img.example.com/sku-main.jpg?x=1',
           supplementarySkuImageUrls: [
             'https://img.example.com/sku.jpg?x=1',
             'https://img.example.com/sku.jpg?x=2',
@@ -83,8 +84,8 @@ assert.deepStrictEqual(
       ],
     },
   ]),
-  ['https://img.example.com/sku.jpg'],
-  'SKU image URL collection should normalize and dedupe supplementary SKU images.',
+  ['https://img.example.com/sku-main.jpg', 'https://img.example.com/sku.jpg'],
+  'SKU image URL collection should include attr value main images and normalize supplementary SKU images.',
 );
 
 assert.ok(

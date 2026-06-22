@@ -15,11 +15,11 @@ assert.ok(
 );
 
 assert.ok(
-  runPanelSource.includes('v-if="currentPage === \'products\'" class="module-progress-panel product-progress-panel"')
-    && runPanelSource.includes('当前正在编辑')
-    && runPanelSource.includes('当前进度')
+  runPanelSource.includes('v-if="currentPage === \'products\' || currentPage === NAV_PRODUCT_LIMIT_KEY" class="module-progress-panel product-progress-panel"')
+    && runPanelSource.includes('productProgress.currentLabel')
+    && runPanelSource.includes('productProgress.progressLabel')
     && runPanelSource.includes('总进度'),
-  'Product edit run status should show current product, current progress, and total progress.',
+  'Product edit and product-limit pages should show their own dynamic current-target, progress, and total-progress labels.',
 );
 
 assert.ok(

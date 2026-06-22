@@ -29,14 +29,18 @@
     unknown: '未知错误',
   };
 
+  const DOCUMENT_TITLE_PREFIX = 'TikTok Shop丨妙手自动化工作台';
+  const PRODUCT_MANAGEMENT_ACTION_UNPUBLISH_LIMIT_STORES = 'unpublish-limit-stores';
+  const NAV_PRODUCT_LIMIT_KEY = 'products-limit-stores';
   const PAGE_TITLES = {
     home: '首页',
     collect: '商品采集',
     products: '编辑商品',
+    ['products-limit-stores']: '上限店铺商品下架',
     flash: '秒杀管理',
     config: '账户配置',
   };
-  const DOCUMENT_TITLE_PREFIX = 'TikTok Shop丨妙手自动化工作台';
+  const NAV_PAGE_KEYS = new Set(['home', 'collect', 'products', NAV_PRODUCT_LIMIT_KEY, 'flash', 'config']);
 
   function buildDocumentTitle(page) {
     const title = PAGE_TITLES[page] || PAGE_TITLES.home;
@@ -269,6 +273,19 @@
     if (tasks.collect) {
       return `商品采集 ${run.collectCount || run.count || 0} 个`;
     }
+    if (tasks.productManagement) {
+      const summary = run.productManagementSummary || (run.summary && run.summary.productManagement) || run.summary || {};
+      if (summary.mode === 'product-limit-store-unpublish') {
+        const matchedStoreCount = Number.isFinite(Number(summary.matchedStoreCount))
+          ? Number(summary.matchedStoreCount)
+          : (Array.isArray(summary.matchedStores) ? summary.matchedStores.length : 0);
+        const unpublishedCount = Number.isFinite(Number(summary.unpublishedCount))
+          ? Number(summary.unpublishedCount)
+          : 0;
+        return `上限店铺商品下架（命中 ${matchedStoreCount} 个店铺，下架 ${unpublishedCount} 个商品）`;
+      }
+      return '上限店铺商品下架';
+    }
     const parts = [];
     if (tasks.edit !== false) {
       const editResultText = run.itemSelectionMode === 'all' ? buildHistoryResultText(run, 'products') : '';
@@ -340,6 +357,10 @@
     return Boolean(run && run.tasks && run.tasks.flash);
   }
 
+  function runHasProductManagementTask(run) {
+    return Boolean(run && run.tasks && run.tasks.productManagement);
+  }
+
   function runIsFlashPhase(run) {
     const progress = run && run.progress ? run.progress : {};
     const phase = String(progress.phase || '');
@@ -362,6 +383,7 @@
     const hasEdit = runHasEditTask(run);
     const hasCollect = runHasCollectTask(run);
     const hasFlash = runHasFlashTask(run);
+    const hasProductManagement = runHasProductManagementTask(run);
     const flashPhaseOrResult = runIsFlashPhase(run) || runHasFlashResult(run);
     if (page === 'collect') {
       return hasCollect;
@@ -369,8 +391,11 @@
     if (page === 'flash') {
       return hasFlash && (!hasEdit || flashPhaseOrResult);
     }
+    if (page === NAV_PRODUCT_LIMIT_KEY) {
+      return hasProductManagement && !hasCollect && !hasEdit && !hasFlash;
+    }
     if (page === 'products') {
-      return hasEdit && !hasCollect && (!hasFlash || !flashPhaseOrResult);
+      return hasEdit && !hasProductManagement && !hasCollect && (!hasFlash || !flashPhaseOrResult);
     }
     return false;
   }
@@ -384,6 +409,9 @@
     }
     if (page === 'collect') {
       return run.collectSummary || (run.summary && run.summary.collect) || run.summary || null;
+    }
+    if (page === NAV_PRODUCT_LIMIT_KEY) {
+      return run.productManagementSummary || (run.summary && run.summary.productManagement) || run.summary || null;
     }
     if (page === 'products') {
       return run.editSummary || (run.summary && run.summary.edit) || run.summary || null;
@@ -478,6 +506,9 @@
     if (runHasCollectTask(run)) {
       return 'collect';
     }
+    if (runHasProductManagementTask(run)) {
+      return NAV_PRODUCT_LIMIT_KEY;
+    }
     if (runHasFlashTask(run) && !runHasEditTask(run)) {
       return 'flash';
     }
@@ -530,9 +561,16 @@
         sourcePriceExtraCny: 0,
         weightPaddingGrams: 30,
         buyOneTakeOne: false,
+        buyOneTakeOnePriceMarkupPercent: 90,
         runFlashAfterEdit: false,
         productFlashSelectionMode: 'all',
         flashCount: 1,
+      });
+      const productLimitStarting = ref(false);
+      const productLimitForm = reactive({
+        maxPages: 5,
+        retainCount: 900,
+        stores: '',
       });
 
       const collectForm = reactive({
@@ -580,9 +618,13 @@
       }));
 
       const pageTitle = computed(() => PAGE_TITLES[currentPage.value] || PAGE_TITLES.home);
+      const currentNavKey = computed(() => currentPage.value);
       const pageSubtitle = computed(() => {
         if (currentPage.value === 'collect') {
           return '从 1688 或 Amazon.com 筛选商品，并通过妙手开放 API 采集到 TikTok 采集箱。';
+        }
+        if (currentPage.value === NAV_PRODUCT_LIMIT_KEY) {
+          return '扫描发布失败记录，找出商品数量达到上限的店铺，并只下架这些店铺最后一页的零销量商品。';
         }
         if (currentPage.value === 'products') {
           return '编辑优化商品，可选择是否发布，并可继续执行秒杀活动。';
@@ -601,6 +643,7 @@
       const runSummary = computed(() => pageSummary(displayRun.value, currentPage.value));
       const runProgress = computed(() => displayRun.value && displayRun.value.progress ? displayRun.value.progress : null);
       const runMetrics = computed(() => buildRunMetrics(displayRun.value, runSummary.value));
+      const productLimitBusy = computed(() => loading.value || productLimitStarting.value);
       const progressPercent = computed(() => {
         const progress = runProgress.value;
         if (!progress) {
@@ -611,14 +654,21 @@
       const productProgress = computed(() => {
         const progress = runProgress.value || {};
         const detailId = String(runProgress.value && runProgress.value.detailId ? runProgress.value.detailId : '').trim();
+        const detailName = String(progress.detailName || '').trim();
+        const phaseLabel = String(progress.phaseLabel || '').trim();
+        const isLimitStoreRun = runHasProductManagementTask(displayRun.value);
         const completed = metricCountOrNull(progress.completed);
         const total = metricCountOrNull(progress.totalCount, progress.total);
-        const currentItem = detailId
+        const currentItem = isLimitStoreRun
+          ? (detailName || detailId || (isPageRunning.value ? phaseLabel || '正在处理店铺' : '等待开始'))
+          : (detailId
           ? `商品 ${detailId}`
-          : (isPageRunning.value ? '正在读取商品' : '等待开始');
+          : (isPageRunning.value ? '正在读取商品' : '等待开始'));
         const completedText = completed === null ? 0 : completed;
         const totalText = total === null ? 0 : total;
         return {
+          currentLabel: isLimitStoreRun ? '当前处理店铺' : '当前正在编辑',
+          progressLabel: isLimitStoreRun ? '店铺进度' : '当前进度',
           currentItem,
           currentProgress: `${completedText} / ${totalText}`,
           totalProgress: `${Math.round(progressPercent.value)}%`,
@@ -773,6 +823,10 @@
         .split(/[\s,，、]+/)
         .map((item) => item.trim())
         .filter(Boolean));
+      const productLimitStoreList = computed(() => String(productLimitForm.stores || '')
+        .split(/[\r\n,，]+/)
+        .map((item) => item.trim())
+        .filter(Boolean));
       const supportsAmazonCollection = computed(() => {
         const capabilities = serverCapabilities.value || {};
         const sources = Array.isArray(capabilities.collectSources) ? capabilities.collectSources : [];
@@ -820,6 +874,10 @@
       const productRangeEnd = computed(() => productForm.itemSelectionMode === 'all'
         ? 0
         : productForm.itemStartIndex + Math.max(1, productForm.count) - 1);
+      function productBuyOneTakeOneMarkupPercent() {
+        const parsed = Number(productForm.buyOneTakeOnePriceMarkupPercent || 90);
+        return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 90;
+      }
       const productTaskSummary = computed(() => {
         const account = defaultAccount.value ? maskPhoneText(defaultAccount.value.label) : '默认账号';
         const selection = productForm.itemSelectionMode === 'all'
@@ -829,9 +887,42 @@
         const flashText = productForm.runFlashAfterEdit
           ? `，完成后继续处理 ${flashSelectionText(productForm.productFlashSelectionMode, productForm.flashCount)}`
           : '';
-        const offerText = productForm.buyOneTakeOne ? '，单 SKU 添加 Buy 1 Take 1' : '';
+        const offerText = productForm.buyOneTakeOne
+          ? `，单 SKU 添加 Buy 1 Take 1（加价比例 ${productBuyOneTakeOneMarkupPercent()}%）`
+          : '';
         return `使用 ${account}，编辑优化 ${selection}，${publishText}${offerText}${flashText}。`;
       });
+      function productLimitRetainCountValue() {
+        const rawValue = productLimitForm.retainCount;
+        if (rawValue === '' || rawValue === null || rawValue === undefined) {
+          return 900;
+        }
+        const parsed = Number(rawValue);
+        return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 900;
+      }
+      const productLimitTaskSummary = computed(() => {
+        const account = defaultAccount.value ? maskPhoneText(defaultAccount.value.label) : '默认账号';
+        const maxPages = Math.max(1, Number(productLimitForm.maxPages || 1));
+        const storeCount = productLimitStoreList.value.length;
+        const retainCount = productLimitRetainCountValue();
+        const targetText = storeCount > 0
+          ? `手动指定 ${storeCount} 个店铺，直接使用店铺名搜索`
+          : `扫描发布失败记录前 ${maxPages} 页`;
+        return `使用 ${account}，${targetText}；仅处理失败原因同时包含“商店试用期”和“最多只能使用1000个产品列表”的店铺；进入店铺产品后筛选销量 0 到 0，搜索结果加载后切 100条/页；零销量商品超过 ${retainCount} 个时从最后一页开始下架，直到不超过这个数量；执行下架。`;
+      });
+      const productLimitRealtimeStores = computed(() => {
+        const progress = runProgress.value || {};
+        return Array.isArray(progress.matchedStores) ? progress.matchedStores : [];
+      });
+      const productLimitPreviewStores = computed(() => (
+        productLimitRealtimeStores.value.length
+          ? productLimitRealtimeStores.value
+          : (runSummary.value
+        && runSummary.value.mode === 'product-limit-store-unpublish'
+        && Array.isArray(runSummary.value.matchedStores)
+          ? runSummary.value.matchedStores
+          : [])
+      ));
       const collectTaskSummary = computed(() => {
         const account = defaultAccount.value ? maskPhoneText(defaultAccount.value.label) : '默认账号';
         const targetCount = collectForm.mode === 'links'
@@ -873,6 +964,7 @@
         `价格加价：${Number(productForm.sourcePriceExtraCny || 0).toFixed(2)} 元`,
         `重量加重：${Number(productForm.weightPaddingGrams || 0)} g`,
         `买一送一规格：${productForm.buyOneTakeOne ? '添加' : '不添加'}`,
+        ...(productForm.buyOneTakeOne ? [`买一送一加价比例：${productBuyOneTakeOneMarkupPercent()}%`] : []),
         `发布开关：${productForm.publish ? '发布' : '不发布'}`,
       ]);
 
@@ -888,6 +980,12 @@
       function setCurrentPage(page) {
         currentPage.value = page;
         window.localStorage.setItem('miaoshou-active-page', currentPage.value);
+      }
+
+      function resetPageScroll() {
+        window.requestAnimationFrame(() => {
+          window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        });
       }
 
       async function confirmLeaveConfigIfNeeded(targetPage) {
@@ -913,11 +1011,16 @@
       }
 
       async function goPage(event) {
+        if (!NAV_PAGE_KEYS.has(event.key)) {
+          return;
+        }
         await switchPage(event.key);
+        resetPageScroll();
       }
 
       async function navigateToPage(page) {
         await switchPage(page);
+        resetPageScroll();
       }
 
       function updateDocumentTitle(page = currentPage.value) {
@@ -1012,6 +1115,7 @@
           `来源价格加价：${Number(productForm.sourcePriceExtraCny || 0).toFixed(2)} 元`,
           `SKU 重量额外加重：${Number(productForm.weightPaddingGrams || 0)} g`,
           `买一送一规格：${productForm.buyOneTakeOne ? '添加' : '不添加'}`,
+          ...(productForm.buyOneTakeOne ? [`买一送一加价比例：${productBuyOneTakeOneMarkupPercent()}%`] : []),
           `发布开关：${productForm.publish ? '发布' : '不发布'}`,
         ];
         if (productForm.runFlashAfterEdit) {
@@ -1167,8 +1271,20 @@
           sourcePriceExtraCny: Number(productForm.sourcePriceExtraCny || 0),
           weightPaddingGrams: Number(productForm.weightPaddingGrams || 0),
           buyOneTakeOne: Boolean(productForm.buyOneTakeOne),
+          buyOneTakeOnePriceMarkupPercent: Number(productForm.buyOneTakeOnePriceMarkupPercent || 90),
           flashSelectionMode: productForm.productFlashSelectionMode,
           flashCount: Math.max(1, Number(productForm.flashCount || 1)),
+        };
+      }
+
+      function productLimitPayload() {
+        return {
+          tasks: { productManagement: true, edit: false, flash: false, collect: false },
+          productManagementAction: PRODUCT_MANAGEMENT_ACTION_UNPUBLISH_LIMIT_STORES,
+          productManagementMaxPages: Math.max(1, Number(productLimitForm.maxPages || 1)),
+          productManagementRetainCount: productLimitRetainCountValue(),
+          productManagementDryRun: false,
+          productManagementStores: productLimitStoreList.value,
         };
       }
 
@@ -1397,6 +1513,47 @@
         } catch (error) {
           notify('error', normalizeApiError(error));
         } finally {
+          loading.value = false;
+        }
+      }
+
+      async function startProductLimitCleanupRun() {
+        if (productLimitStarting.value || isRunning.value) {
+          return;
+        }
+        productLimitStarting.value = true;
+        loading.value = true;
+        try {
+          const payload = productLimitPayload();
+          const precheck = await runPrecheck(payload);
+          if (!precheck.ok) {
+            throw new Error((precheck.blockers || []).join('；') || '预检未通过。');
+          }
+          const confirmed = await confirmTaskStart({
+            title: '确认开始上限店铺商品下架',
+            summary: productLimitTaskSummary.value,
+            details: [
+              '失败原因必须同时包含“商店试用期”和“最多只能使用1000个产品列表”。',
+              '店铺产品必须先设置销量 0 到 0 并点击搜索。',
+              `搜索结果加载后才切换 100条/页；零销量商品超过 ${productLimitRetainCountValue()} 个时从最后一页开始下架，直到不超过这个数量。`,
+              '手动指定店铺时直接填写店铺名，每行一个。',
+              ...formatPrecheckDetails(precheck),
+            ],
+          });
+          if (!confirmed) {
+            return;
+          }
+          await requestJson('/api/run', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          await fetchStatus();
+          notify('success', '上限店铺商品下架任务已开始。');
+        } catch (error) {
+          notify('error', normalizeApiError(error));
+        } finally {
+          productLimitStarting.value = false;
           loading.value = false;
         }
       }
@@ -1711,11 +1868,18 @@
         onUseLocalEnvChange,
         onLogScroll,
         openDiagnostic,
+        currentNavKey,
         pageSubtitle,
         pageTitle,
         pageLogs,
         productForm,
         productEditPreviewItems,
+        productLimitForm,
+        productLimitBusy,
+        productLimitPreviewStores,
+        productLimitRealtimeStores,
+        productLimitStoreList,
+        productLimitTaskSummary,
         productRangeEnd,
         productProgress,
         productTaskSummary,
@@ -1728,6 +1892,7 @@
         queuePaused,
         queueStatusText,
         moveQueueItem,
+        NAV_PRODUCT_LIMIT_KEY,
         removeQueueItem,
         runProgress,
         runMetrics,
@@ -1742,6 +1907,7 @@
         enqueueFlashRun,
         startCollectRun,
         startFlashRun,
+        startProductLimitCleanupRun,
         startQueueRun,
         startProductRun,
         statusColor,
@@ -1768,10 +1934,14 @@
                   <p class="brand-subtitle">妙手自动化工作台</p>
                 </div>
               </div>
-              <a-menu :selected-keys="[currentPage]" mode="horizontal" class="top-menu" @click="goPage">
+              <a-menu :selected-keys="[currentNavKey]" mode="horizontal" trigger-sub-menu-action="hover" class="top-menu" @click="goPage">
                 <a-menu-item key="home">首页</a-menu-item>
                 <a-menu-item key="collect">商品采集</a-menu-item>
-                <a-menu-item key="products">编辑商品</a-menu-item>
+                <a-sub-menu key="product-management" popup-class-name="top-submenu-popup">
+                  <template #title>商品管理</template>
+                  <a-menu-item key="products">编辑商品</a-menu-item>
+                  <a-menu-item key="products-limit-stores">下架商品</a-menu-item>
+                </a-sub-menu>
                 <a-menu-item key="flash">秒杀管理</a-menu-item>
                 <a-menu-item key="config">账户配置</a-menu-item>
               </a-menu>
@@ -1811,17 +1981,25 @@
                       :loading="loading"
                       @click="enqueueCollectRun"
                     >加入队列</a-button>
-                    <a-button
-                      v-if="currentPage === 'products'"
-                      type="primary"
-                      size="large"
-                      :loading="loading"
+	                    <a-button
+	                      v-if="currentPage === 'products'"
+	                      type="primary"
+	                      size="large"
+	                      :loading="loading"
                       :disabled="isRunning"
                       @click="startProductRun"
-                    >开始商品任务</a-button>
-                    <a-button
-                      v-if="currentPage === 'products'"
-                      size="large"
+	                    >开始商品任务</a-button>
+	                    <a-button
+	                      v-if="currentPage === NAV_PRODUCT_LIMIT_KEY"
+	                      type="primary"
+	                      size="large"
+                      :loading="productLimitBusy"
+                      :disabled="isRunning || productLimitBusy"
+                      @click="startProductLimitCleanupRun"
+	                    >开始下架</a-button>
+	                    <a-button
+	                      v-if="currentPage === 'products'"
+	                      size="large"
                       :loading="loading"
                       @click="enqueueProductRun"
                     >加入队列</a-button>
@@ -1946,9 +2124,9 @@
                   </article>
                   <article class="home-quick-card">
                     <div>
-                      <span>编辑商品</span>
-                      <strong>优化采集箱商品</strong>
-                      <p>处理标题、价格、重量和发布。</p>
+                      <span>商品管理</span>
+                      <strong>编辑商品和处理上限店铺</strong>
+                      <p>处理标题、价格、重量、发布和零销量下架。</p>
                     </div>
                     <a-button type="primary" @click="navigateToPage('products')">进入配置</a-button>
                   </article>
@@ -2166,14 +2344,14 @@
                   </a-form>
                 </a-card>
 
-                <a-card v-if="currentPage === 'products'" title="编辑商品" class="soft-card task-card product-panel">
-                  <a-alert
-                    type="info"
-                    show-icon
-                    message="编辑发布商品"
-                    description="优化商品内容，可选择是否发布；快速模式使用本地规则审核图片，精细模式使用 MiMo，可以稳定删除不符合要求的图片，但是会消耗token。"
-                  />
-                  <a-form layout="vertical" class="task-form">
+	                <a-card v-if="currentPage === 'products'" title="编辑商品" class="soft-card task-card product-panel">
+	                  <a-alert
+	                    type="info"
+	                    show-icon
+	                    message="编辑发布商品"
+	                    description="优化商品内容，可选择是否发布；快速模式使用本地规则审核图片，精细模式使用 MiMo，可以稳定删除不符合要求的图片，但是会消耗token。"
+	                  />
+	                  <a-form layout="vertical" class="task-form">
                     <a-form-item label="处理模式" class="form-section form-section-mode">
                       <a-radio-group v-model:value="productForm.processingMode" button-style="solid" class="medium-radio-group equal-radio-group">
                         <a-radio-button value="fast" title="图片审核只用本地规则，速度更快">快速模式</a-radio-button>
@@ -2216,10 +2394,24 @@
                       </a-col>
                     </a-row>
                     <a-form-item label="单 SKU 增加买一送一规格" class="form-section form-section-offer">
-                      <a-radio-group v-model:value="productForm.buyOneTakeOne" button-style="solid" class="medium-radio-group">
-                        <a-radio-button :value="false">不添加</a-radio-button>
-                        <a-radio-button :value="true">添加</a-radio-button>
-                      </a-radio-group>
+                      <div class="offer-control-stack">
+                        <a-radio-group v-model:value="productForm.buyOneTakeOne" button-style="solid" class="medium-radio-group">
+                          <a-radio-button :value="false">不添加</a-radio-button>
+                          <a-radio-button :value="true">添加</a-radio-button>
+                        </a-radio-group>
+                        <div v-if="productForm.buyOneTakeOne" class="offer-markup-control">
+                          <span class="offer-markup-label">加价比例</span>
+                          <a-input-number
+                            v-model:value="productForm.buyOneTakeOnePriceMarkupPercent"
+                            :min="0"
+                            :max="100"
+                            :precision="0"
+                            addon-after="%"
+                            size="middle"
+                            class="offer-markup-input"
+                          />
+                        </div>
+                      </div>
                     </a-form-item>
                     <a-row :gutter="16" class="form-section form-section-switches">
                       <a-col :xs="24" :sm="12">
@@ -2262,8 +2454,75 @@
                       <strong>任务概况</strong>
                       <p>{{ productTaskSummary }}</p>
                     </div>
-                  </a-form>
-                </a-card>
+	                  </a-form>
+	                </a-card>
+
+	                <a-card v-if="currentPage === NAV_PRODUCT_LIMIT_KEY" title="上限店铺商品下架" class="soft-card task-card limit-store-panel">
+	                  <a-alert
+	                    type="warning"
+	                    show-icon
+	                    message="上限店铺商品下架"
+	                    description="只处理商品数量达到上限的店铺，失败原因必须同时包含“商店试用期”和“最多只能使用1000个产品列表”；进入店铺产品后先设置销量 0 到 0 并点击搜索，搜索结果加载后切 100条/页，零销量商品超过保留数量时从最后一页开始下架，直到不超过这个数量。"
+	                  />
+	                  <a-form layout="vertical" class="task-form limit-store-form">
+                          <div class="form-section form-section-summary limit-store-number-row">
+                            <a-form-item
+                              label="扫描页数"
+                              class="limit-store-scan-pages"
+                              extra="从发布失败记录第一页开始向后扫描的页数。"
+                            >
+                              <a-input-number v-model:value="productLimitForm.maxPages" :min="1" :max="50" size="middle" class="full-width" />
+                            </a-form-item>
+                            <a-form-item
+                              label="保留数量"
+                              class="limit-store-retain-count"
+                              extra="零销量商品数量不超过这个值时跳过；超过后从最后一页开始下架，直到不超过这个数量。"
+                            >
+                              <a-input-number v-model:value="productLimitForm.retainCount" :min="0" :max="100000" size="middle" class="full-width" />
+                            </a-form-item>
+                          </div>
+                          <a-form-item
+                            label="指定店铺"
+                            class="form-section form-section-summary"
+                            :extra="'每行一个店铺名；留空自动从发布失败记录识别。当前识别到 ' + productLimitStoreList.length + ' 个店铺。'"
+                          >
+                            <a-textarea
+                              v-model:value="productLimitForm.stores"
+                              :rows="4"
+                              placeholder="X SEVEN SHOP PH"
+                            />
+                          </a-form-item>
+                          <div class="summary-box form-section form-section-summary">
+                            <strong>任务概况</strong>
+                            <p>{{ productLimitTaskSummary }}</p>
+                          </div>
+                          <section
+                            v-if="productLimitPreviewStores.length"
+                            class="limit-store-preview-card form-section form-section-summary"
+                          >
+                            <div class="limit-store-preview-head">
+                              <strong>命中店铺</strong>
+                              <span>{{ productLimitPreviewStores.length }} 个</span>
+                            </div>
+                            <div class="limit-store-preview-grid">
+                              <div
+                                v-for="item in productLimitPreviewStores"
+                                :key="item.storeName || item.name || item"
+                                class="limit-store-preview-item"
+                              >
+                                <span class="limit-store-name">{{ item.storeName || item.name || item }}</span>
+                                <span class="limit-store-meta">
+                                  <template v-if="item.failureCount">发布失败 {{ item.failureCount }} 条</template>
+                                  <template v-else-if="item.unpublishedCount !== undefined">下架 {{ item.unpublishedCount }} 个</template>
+                                  <template v-else-if="item.error">异常</template>
+                                  <template v-else-if="item.reason">{{ item.reason }}</template>
+                                  <template v-else>已命中</template>
+                                </span>
+                              </div>
+                            </div>
+                          </section>
+		                  </a-form>
+		                </a-card>
 
                 <a-card v-if="currentPage === 'flash'" title="秒杀管理" class="soft-card task-card flash-panel">
                   <a-alert
@@ -2552,13 +2811,13 @@
                     </div>
                   </div>
 
-                  <div v-if="currentPage === 'products'" class="module-progress-panel product-progress-panel">
+	                  <div v-if="currentPage === 'products' || currentPage === NAV_PRODUCT_LIMIT_KEY" class="module-progress-panel product-progress-panel">
                     <div class="module-progress-item product-progress-item">
-                      <span>当前正在编辑</span>
+                      <span>{{ productProgress.currentLabel }}</span>
                       <strong :title="productProgress.currentItem">{{ productProgress.currentItem }}</strong>
                     </div>
                     <div class="module-progress-item product-progress-item">
-                      <span>当前进度</span>
+                      <span>{{ productProgress.progressLabel }}</span>
                       <strong>{{ productProgress.currentProgress }}</strong>
                     </div>
                     <div class="module-progress-item product-progress-item">

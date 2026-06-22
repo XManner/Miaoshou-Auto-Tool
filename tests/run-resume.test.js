@@ -19,6 +19,7 @@ const editRun = {
   sourcePriceExtraCny: 5,
   weightPaddingGrams: 30,
   buyOneTakeOne: true,
+  buyOneTakeOnePriceMarkupPercent: 90,
   progress: { phase: 'edit', completed: 3, total: 7 },
 };
 
@@ -32,6 +33,7 @@ assert.strictEqual(editInput.count, 4);
 assert.strictEqual(editInput.publish, true);
 assert.strictEqual(editInput.processingMode, 'precise');
 assert.strictEqual(editInput.buyOneTakeOne, true);
+assert.strictEqual(editInput.buyOneTakeOnePriceMarkupPercent, 90);
 
 const flashRun = {
   id: 'flash-run',

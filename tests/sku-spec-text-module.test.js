@@ -52,6 +52,38 @@ assert.strictEqual(
   'Known Chinese SKU names should use safe fallback translations.',
 );
 
+const duplicatePropertyNames = skuSpecText.translateSkuPropertyListWithFallbackMap([
+  {
+    attrName: '颜色',
+    attrValueList: [
+      { attrValue: '红色' },
+      { attrValue: '蓝色' },
+    ],
+  },
+  {
+    attrName: '颜色',
+    attrValueList: [
+      { attrValue: '2 pieces' },
+      { attrValue: '4 pieces' },
+    ],
+  },
+]);
+assert.deepStrictEqual(
+  duplicatePropertyNames.map((property) => property.attrName),
+  ['Color', 'Quantity'],
+  'Duplicate translated SKU property names should be renamed to safe unique names.',
+);
+
+const duplicatePropertyNamesWithChineseQuantity = skuSpecText.ensureUniqueSkuPropertyNames([
+  { attrName: 'Color', attrValueList: [{ attrValue: 'Red' }] },
+  { attrName: 'Color', attrValueList: [{ attrValue: '2个' }, { attrValue: '4个' }] },
+]);
+assert.deepStrictEqual(
+  duplicatePropertyNamesWithChineseQuantity.map((property) => property.attrName),
+  ['Color', 'Quantity'],
+  'Duplicate SKU property names with Chinese quantity values should prefer Quantity.',
+);
+
 assert.deepStrictEqual(
   skuSpecText.collectSkuTextsForTranslation([
     {

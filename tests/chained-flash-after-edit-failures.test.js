@@ -9,8 +9,9 @@ assert.ok(
   'Web summary should collect failed result items into a dedicated list.',
 );
 assert.ok(
-  source.includes('failedItems: collectFailedResultItems(parsed.results)'),
-  'Normalized summaries should expose failed items.',
+  source.includes('collectFailedResultItems(parsed.results)')
+    && source.includes('failedItems,'),
+  'Normalized summaries should expose failed items, including parsed failedItems when provided.',
 );
 assert.ok(
   source.includes('function isRecoverableEditSummaryForFlash'),
