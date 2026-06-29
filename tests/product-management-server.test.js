@@ -74,6 +74,12 @@ assert.ok(
   'Product-management progress should persist matchedStores from scan events for realtime UI display.',
 );
 
+assert.ok(
+  serverSource.includes('unmatchedFailureRecords: Array.isArray(event.unmatchedFailureRecords)')
+    && serverSource.includes('parsed.unmatchedFailureRecords'),
+  'Product-management progress and summaries should preserve unmatched publish-failure diagnostics.',
+);
+
 for (const fieldName of [
   'productManagementAction',
   'productManagementMaxPages',

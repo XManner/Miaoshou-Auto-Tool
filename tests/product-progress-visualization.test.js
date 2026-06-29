@@ -4,7 +4,7 @@ const path = require('path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
-const runPanelSource = appSource.match(/<a-card v-if="currentPage !== 'home' && currentPage !== 'config'" title="运行状态"[\s\S]*?<a-card v-if="currentPage === 'collect'"/)?.[0] || '';
+const runPanelSource = appSource.match(/<a-card v-if="currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY && currentPage !== 'config'" title="运行状态"[\s\S]*?<a-card v-if="currentPage === 'collect'"/)?.[0] || '';
 
 assert.ok(
   appSource.includes('const productProgress = computed')

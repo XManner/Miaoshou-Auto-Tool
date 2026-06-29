@@ -114,6 +114,7 @@ assert.deepStrictEqual(
     {
       storeName: 'X SEVEN SHOP PH',
       storeOptionText: '',
+      storeSearchText: 'X SEVEN SHOP PH',
       failureCount: 1,
     },
   ],
@@ -124,12 +125,13 @@ assert.deepStrictEqual(
   resolveManualStoreTargets(['BEAUTY LIFE-马来']),
   [
     {
-      storeName: 'BEAUTY LIFE',
+      storeName: 'BEAUTY LIFE-马来',
       storeOptionText: 'BEAUTY LIFE-马来',
+      storeSearchText: 'BEAUTY LIFE-马来',
       failureCount: 1,
     },
   ],
-  'Manual store target resolution should keep explicit country-qualified store options.',
+  'Manual store target resolution should keep explicit country-qualified store text for direct search.',
 );
 
 assert.strictEqual(
@@ -299,8 +301,10 @@ assert.ok(
 );
 
 assert.ok(
-  !helperSource.includes('extractTotalProductCount') && !helperSource.includes('总计'),
-  'Helper should not use 总计 as the unpublishedCount source.',
+  !helperSource.includes('extractTotalProductCount')
+    && helperSource.includes('getSuccessfulUnpublishCount')
+    && helperSource.includes('result.successCount'),
+  'Helper should use successful down-shelve count, not 总计, as the unpublishedCount source.',
 );
 
 assert.ok(

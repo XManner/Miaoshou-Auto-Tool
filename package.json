@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "ant-design-vue": "^4.2.6",
+    "echarts": "^6.1.0",
     "iconv-lite": "^0.7.2",
     "openai": "^6.36.0",
     "puppeteer-core": "^25.0.4",

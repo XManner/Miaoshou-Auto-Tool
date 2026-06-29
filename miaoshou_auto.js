@@ -1391,20 +1391,7 @@ function applyBuyOneTakeOneOfferToPreparedItem(itemInfo = {}, {
   }
 
   const skuEntries = Object.entries(itemInfo.skuMap || {});
-  const resolvedOriginalSkuCount = Number.isInteger(originalSkuCount)
-    ? originalSkuCount
-    : skuEntries.length;
-  if (resolvedOriginalSkuCount !== 1 || skuEntries.length !== 1) {
-    return {
-      itemInfo,
-      applied: false,
-      reason: resolvedOriginalSkuCount > 1 || skuEntries.length > 1 ? 'multiple_skus' : 'not_single_sku',
-    };
-  }
-
-  const [defaultSkuKey, defaultSkuValue] = skuEntries[0];
   const cleanedPropertyList = cleanSkuPropertyList(itemInfo.skuPropertyList);
-  const defaultSkuKeyTokens = parseSkuKeyAttrValueIds(defaultSkuKey);
   const firstProperty = cleanedPropertyList[0] || {
     attrId: null,
     attrName: DEFAULT_SINGLE_SPEC_ATTR_NAME,
@@ -1413,6 +1400,34 @@ function applyBuyOneTakeOneOfferToPreparedItem(itemInfo = {}, {
   const firstValueList = Array.isArray(firstProperty.attrValueList)
     ? firstProperty.attrValueList
     : [];
+  const existingOfferValue = firstValueList.find((value) => (
+    normalizeText(value && value.attrValue).toLowerCase() === BUY_ONE_TAKE_ONE_LABEL.toLowerCase()
+  ));
+  const existingOfferAttrValueId = normalizeText(existingOfferValue && existingOfferValue.attrValueId);
+  const isExistingOfferSkuEntry = ([skuKey]) => (
+    existingOfferAttrValueId && parseSkuKeyAttrValueIds(skuKey).includes(existingOfferAttrValueId)
+  );
+  const baseSkuEntries = existingOfferAttrValueId
+    ? skuEntries.filter((entry) => !isExistingOfferSkuEntry(entry))
+    : skuEntries;
+  const offerSkuEntries = existingOfferAttrValueId
+    ? skuEntries.filter(isExistingOfferSkuEntry)
+    : [];
+  const resolvedOriginalSkuCount = existingOfferAttrValueId
+    ? baseSkuEntries.length
+    : (Number.isInteger(originalSkuCount) ? originalSkuCount : skuEntries.length);
+  if (resolvedOriginalSkuCount !== 1 || baseSkuEntries.length !== 1 || offerSkuEntries.length > 1) {
+    return {
+      itemInfo,
+      applied: false,
+      reason: resolvedOriginalSkuCount > 1 || baseSkuEntries.length > 1 || offerSkuEntries.length > 1
+        ? 'multiple_skus'
+        : 'not_single_sku',
+    };
+  }
+
+  const [defaultSkuKey, defaultSkuValue] = baseSkuEntries[0];
+  const defaultSkuKeyTokens = parseSkuKeyAttrValueIds(defaultSkuKey);
   const defaultValue = firstValueList.find((value) => (
     defaultSkuKeyTokens.includes(normalizeText(value && value.attrValueId))
   )) || firstValueList[0] || {
@@ -1428,10 +1443,7 @@ function applyBuyOneTakeOneOfferToPreparedItem(itemInfo = {}, {
     };
   }
 
-  const existingOfferValue = firstValueList.find((value) => (
-    normalizeText(value && value.attrValue).toLowerCase() === BUY_ONE_TAKE_ONE_LABEL.toLowerCase()
-  ));
-  const offerAttrValueId = normalizeText(existingOfferValue && existingOfferValue.attrValueId)
+  const offerAttrValueId = existingOfferAttrValueId
     || buildUniqueBuyOneTakeOneAttrValueId({
       itemInfo,
       defaultAttrValueId,
@@ -1439,11 +1451,11 @@ function applyBuyOneTakeOneOfferToPreparedItem(itemInfo = {}, {
     });
   const offerSkuKey = buildBuyOneTakeOneSkuKey(defaultSkuKey, defaultAttrValueId, offerAttrValueId);
 
-  if (!offerSkuKey || Object.prototype.hasOwnProperty.call(itemInfo.skuMap || {}, offerSkuKey)) {
+  if (!offerSkuKey) {
     return {
       itemInfo,
       applied: false,
-      reason: 'offer_sku_exists',
+      reason: 'missing_offer_sku_key',
     };
   }
 

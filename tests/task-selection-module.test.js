@@ -4,7 +4,7 @@ const path = require('path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'web_server.js'), 'utf8');
-const runPanelSource = appSource.match(/<a-card v-if="currentPage !== 'home' && currentPage !== 'config'" title="运行状态"[\s\S]*?<a-card v-if="currentPage === 'collect'"/)?.[0] || '';
+const runPanelSource = appSource.match(/<a-card v-if="currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY && currentPage !== 'config'" title="运行状态"[\s\S]*?<a-card v-if="currentPage === 'collect'"/)?.[0] || '';
 
 assert.ok(
   serverSource.includes('/vendor/vue.global.prod.js'),
@@ -34,7 +34,7 @@ assert.ok(appSource.includes('<a-card v-if="currentPage === NAV_PRODUCT_LIMIT_KE
 assert.ok(appSource.includes('<a-menu-item key="products-limit-stores">下架商品</a-menu-item>'), 'Product management submenu should include 下架商品.');
 assert.ok(appSource.includes('秒杀管理'), 'Navigation should include 秒杀管理.');
 assert.ok(
-  /<a-menu[\s\S]*trigger-sub-menu-action="hover"[\s\S]*<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-sub-menu key="product-management"[\s\S]*<template #title>商品管理<\/template>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="products-limit-stores">下架商品<\/a-menu-item>[\s\S]*<\/a-sub-menu>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>/.test(appSource),
+  /<a-menu[\s\S]*trigger-sub-menu-action="hover"[\s\S]*<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="dashboard">数据大屏<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-sub-menu key="product-management"[\s\S]*<template #title>商品管理<\/template>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="products-limit-stores">下架商品<\/a-menu-item>[\s\S]*<\/a-sub-menu>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>/.test(appSource),
   'Navigation should keep only product management as a hover submenu with edit and offline entries.',
 );
 assert.ok(
@@ -71,7 +71,7 @@ assert.ok(
   'The web server should return PNG and ICO assets with image content types.',
 );
 assert.ok(
-  appSource.includes("v-if=\"currentPage !== 'home'\" class=\"page-hero\"")
+  appSource.includes("v-if=\"currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY\" class=\"page-hero\"")
     && !appSource.includes("currentPage === 'home'\" class=\"home-grid\""),
   'The home page should not show the task entry grid.',
 );

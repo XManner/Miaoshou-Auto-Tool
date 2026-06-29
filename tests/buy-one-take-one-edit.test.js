@@ -81,6 +81,42 @@ assert.strictEqual(
   'Buy 1 Take 1 price should use base price plus the configured markup percent.',
 );
 
+const existingOfferResult = auto.applyBuyOneTakeOneOfferToPreparedItem({
+  title: 'Buy 1 Take 1 Soft Makeup Sponge',
+  imgUrls: ['https://img.example/main.jpg'],
+  skuPropertyList: [
+    {
+      attrName: 'Color',
+      attrValueList: [
+        { attrValueId: 'default', attrValue: 'Pink', imgUrl: 'https://img.example/pink.jpg' },
+        { attrValueId: 'offer', attrValue: 'Buy 1 Take 1', imgUrl: 'https://img.example/pink.jpg' },
+      ],
+    },
+  ],
+  skuMap: {
+    ';default;': {
+      itemNum: 'SKU-1',
+      originPrice: '10',
+      weight: 0.1,
+    },
+    ';offer;': {
+      itemNum: 'B1T1',
+      originPrice: '20',
+      weight: 0.2,
+    },
+  },
+}, {
+  enabled: true,
+  maxTitleLength: 180,
+  priceMarkupPercent: 90,
+});
+assert.strictEqual(existingOfferResult.applied, true);
+assert.strictEqual(
+  Number(existingOfferResult.itemInfo.skuMap[';offer;'].originPrice),
+  19,
+  'Existing Buy 1 Take 1 SKU should be repriced with the configured markup percent.',
+);
+
 const mainImageFallbackResult = auto.applyBuyOneTakeOneOfferToPreparedItem({
   title: 'Hair Clip',
   imgUrls: ['https://img.example/main-only.jpg'],

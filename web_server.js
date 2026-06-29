@@ -112,6 +112,7 @@ const STATIC_ASSET_MAP = new Map([
   ['/vendor/dayjs/plugin/weekOfYear.js', path.join(__dirname, 'node_modules/dayjs/plugin/weekOfYear.js')],
   ['/vendor/dayjs/plugin/weekYear.js', path.join(__dirname, 'node_modules/dayjs/plugin/weekYear.js')],
   ['/vendor/dayjs/plugin/weekday.js', path.join(__dirname, 'node_modules/dayjs/plugin/weekday.js')],
+  ['/vendor/echarts/echarts.min.js', path.join(__dirname, 'node_modules/echarts/dist/echarts.min.js')],
   ['/vendor/ant-design-vue/antd.min.js', path.join(__dirname, 'node_modules/ant-design-vue/dist/antd.min.js')],
   ['/vendor/ant-design-vue/reset.css', path.join(__dirname, 'node_modules/ant-design-vue/dist/reset.css')],
 ]);
@@ -1034,6 +1035,9 @@ async function updateRunProgress(run, event = {}) {
     detailId: event.detailId ? String(event.detailId) : run.progress.detailId,
     detailName: event.detailName ? String(event.detailName) : run.progress.detailName,
     matchedStores: Array.isArray(event.matchedStores) ? event.matchedStores : run.progress.matchedStores,
+    unmatchedFailureRecords: Array.isArray(event.unmatchedFailureRecords)
+      ? event.unmatchedFailureRecords
+      : run.progress.unmatchedFailureRecords,
     overallPercent,
     updatedAt: new Date().toISOString(),
   };
@@ -1135,6 +1139,7 @@ function normalizeResultSummary(parsed) {
     requestedCount: parsed.requestedCount,
     scannedFailureRecords: Number.isFinite(Number(parsed.scannedFailureRecords)) ? Number(parsed.scannedFailureRecords) : 0,
     matchedStores: parsed.matchedStores,
+    unmatchedFailureRecords: parsed.unmatchedFailureRecords,
     matchedStoreCount: Number.isFinite(Number(parsed.matchedStoreCount)) ? Number(parsed.matchedStoreCount) : 0,
     processedStoreCount: Number.isFinite(Number(parsed.processedStoreCount)) ? Number(parsed.processedStoreCount) : 0,
     unpublishedCount: Number.isFinite(Number(parsed.unpublishedCount)) ? Number(parsed.unpublishedCount) : 0,
@@ -1597,6 +1602,7 @@ function startProductManagementRun(options) {
       detailId: '',
       detailName: '',
       matchedStores: [],
+      unmatchedFailureRecords: [],
       overallPercent: 0,
       updatedAt: new Date().toISOString(),
     },
@@ -2598,6 +2604,7 @@ function renderPage() {
   <script src="/vendor/dayjs/plugin/weekOfYear.js"></script>
   <script src="/vendor/dayjs/plugin/weekYear.js"></script>
   <script src="/vendor/dayjs/plugin/weekday.js"></script>
+  <script src="/vendor/echarts/echarts.min.js"></script>
   <script src="/vendor/ant-design-vue/antd.min.js"></script>
   <script src="/assets/app.js"></script>
 </body>

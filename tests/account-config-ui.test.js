@@ -16,8 +16,8 @@ assert.ok(
 );
 
 assert.ok(
-  /<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-sub-menu key="product-management"[\s\S]*<template #title>商品管理<\/template>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="products-limit-stores">下架商品<\/a-menu-item>[\s\S]*<\/a-sub-menu>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>[\s\S]*<a-menu-item key="config">账户配置<\/a-menu-item>/.test(appSource),
-  'Navigation order should be 首页 | 商品采集 | 商品管理 | 秒杀管理 | 账户配置.',
+  /<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="dashboard">数据大屏<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-sub-menu key="product-management"[\s\S]*<template #title>商品管理<\/template>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="products-limit-stores">下架商品<\/a-menu-item>[\s\S]*<\/a-sub-menu>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>[\s\S]*<a-menu-item key="config">账户配置<\/a-menu-item>/.test(appSource),
+  'Navigation order should be 首页 | 数据大屏 | 商品采集 | 商品管理 | 秒杀管理 | 账户配置.',
 );
 
 assert.ok(
@@ -231,7 +231,7 @@ assert.strictEqual(
 );
 
 assert.ok(
-  appSource.includes('<a-card v-if="currentPage !== \'home\' && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
+  appSource.includes('<a-card v-if="currentPage !== \'home\' && currentPage !== DASHBOARD_PAGE_KEY && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
   'The config page should not show the shared recent task history panel.',
 );
 

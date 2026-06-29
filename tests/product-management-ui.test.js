@@ -18,7 +18,7 @@ assert.ok(
 assert.ok(
   appSource.includes('const currentNavKey = computed')
     && appSource.includes("const NAV_PRODUCT_LIMIT_KEY = 'products-limit-stores'")
-    && appSource.includes("const NAV_PAGE_KEYS = new Set(['home', 'collect', 'products', NAV_PRODUCT_LIMIT_KEY, 'flash', 'config'])")
+    && appSource.includes("const NAV_PAGE_KEYS = new Set(['home', DASHBOARD_PAGE_KEY, 'collect', 'products', NAV_PRODUCT_LIMIT_KEY, 'flash', 'config'])")
     && !appSource.includes("await switchPage('products');\n          resetPageScroll();\n          return;"),
   'Product management submenu clicks should navigate to independent page keys instead of switching tabs.',
 );

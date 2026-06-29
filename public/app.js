@@ -30,17 +30,19 @@
   };
 
   const DOCUMENT_TITLE_PREFIX = 'TikTok Shop丨妙手自动化工作台';
+  const DASHBOARD_PAGE_KEY = 'dashboard';
   const PRODUCT_MANAGEMENT_ACTION_UNPUBLISH_LIMIT_STORES = 'unpublish-limit-stores';
   const NAV_PRODUCT_LIMIT_KEY = 'products-limit-stores';
   const PAGE_TITLES = {
     home: '首页',
+    dashboard: '数据大屏',
     collect: '商品采集',
     products: '编辑商品',
     ['products-limit-stores']: '上限店铺商品下架',
     flash: '秒杀管理',
     config: '账户配置',
   };
-  const NAV_PAGE_KEYS = new Set(['home', 'collect', 'products', NAV_PRODUCT_LIMIT_KEY, 'flash', 'config']);
+  const NAV_PAGE_KEYS = new Set(['home', DASHBOARD_PAGE_KEY, 'collect', 'products', NAV_PRODUCT_LIMIT_KEY, 'flash', 'config']);
 
   function buildDocumentTitle(page) {
     const title = PAGE_TITLES[page] || PAGE_TITLES.home;
@@ -457,6 +459,118 @@
     return items.slice(0, 80);
   }
 
+  function moduleLabelForPage(page) {
+    if (page === 'collect') {
+      return '商品采集';
+    }
+    if (page === 'products') {
+      return '编辑商品';
+    }
+    if (page === 'flash') {
+      return '秒杀活动';
+    }
+    if (page === NAV_PRODUCT_LIMIT_KEY) {
+      return '上限下架';
+    }
+    return '商品任务';
+  }
+
+  function cockpitRunBusinessCount(run) {
+    if (!run) {
+      return 0;
+    }
+    const page = historyPageForRun(run);
+    const summary = pageSummary(run, page) || {};
+    if (page === NAV_PRODUCT_LIMIT_KEY) {
+      return firstFiniteMetric(summary.unpublishedCount, summary.successCount, summary.totalCount);
+    }
+    if (page === 'collect') {
+      const results = Array.isArray(summary.results) ? summary.results : [];
+      return firstFiniteMetric(summary.successCount, results.length, summary.totalCount);
+    }
+    const metrics = buildHistoryResultMetrics(run, page);
+    return firstFiniteMetric(metrics && metrics.successCount, summary.successCount, summary.totalCount);
+  }
+
+  function buildCockpitModuleCards(runs = []) {
+    const rows = Array.isArray(runs) ? runs : [];
+    return ['collect', 'products', 'flash', NAV_PRODUCT_LIMIT_KEY].map((page) => {
+      const pageRuns = rows.filter((run) => historyPageForRun(run) === page);
+      const successCount = pageRuns.reduce((total, run) => total + cockpitRunBusinessCount(run), 0);
+      const failedCountValue = pageRuns.reduce((total, run) => {
+        const metrics = buildHistoryResultMetrics(run, page);
+        return total + firstFiniteMetric(metrics && metrics.failureCount, run.status === 'error' ? 1 : 0);
+      }, 0);
+      return {
+        key: page,
+        label: moduleLabelForPage(page),
+        runCount: pageRuns.length,
+        successCount,
+        failureCount: failedCountValue,
+      };
+    });
+  }
+
+  function buildCockpitTrend(historyRows = []) {
+    const sourceRows = (Array.isArray(historyRows) ? historyRows : []).slice(0, 12).reverse();
+    const fallbackValues = [32, 68, 45, 86, 58, 24, 72, 91, 54, 77, 48, 88];
+    const points = fallbackValues.map((fallback, index) => {
+      const run = sourceRows[index] || null;
+      const value = run ? Math.max(1, cockpitRunBusinessCount(run)) : fallback;
+      const startedAt = run && run.startedAt ? new Date(run.startedAt) : null;
+      const label = startedAt && !Number.isNaN(startedAt.getTime())
+        ? startedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+        : `${String(index * 2).padStart(2, '0')}:00`;
+      return { label, value };
+    });
+    const maxValue = Math.max(1, ...points.map((point) => point.value));
+    return points.map((point, index) => ({
+      ...point,
+      key: `${point.label}-${index}`,
+      percent: Math.max(10, Math.round((point.value / maxValue) * 100)),
+    }));
+  }
+
+  function buildCockpitOverview({ historyRows = [], currentRun = null, queueRows = [], stats = {} } = {}) {
+    const safeHistory = Array.isArray(historyRows) ? historyRows : [];
+    const processedCount = safeHistory.reduce((total, run) => total + cockpitRunBusinessCount(run), 0);
+    const activeCount = currentRun && currentRun.status === 'running' ? 1 : 0;
+    const failedRuns = firstFiniteMetric(stats.failedRuns, safeHistory.filter((run) => run.status === 'error').length);
+    const stoppedRuns = firstFiniteMetric(stats.stoppedRuns, safeHistory.filter((run) => run.status === 'stopped').length);
+    const totalRuns = firstFiniteMetric(stats.totalRuns, safeHistory.length);
+    const successRate = firstFiniteMetric(stats.successRate, totalRuns > 0 ? Math.round(((stats.successRuns || 0) / totalRuns) * 100) : 0);
+    return {
+      totalRuns,
+      processedCount,
+      activeCount,
+      queueCount: Array.isArray(queueRows) ? queueRows.length : 0,
+      failedRuns,
+      stoppedRuns,
+      successRate,
+      successRateText: stats.successRateText || `${successRate}%`,
+      averageDurationText: stats.averageDurationText || '0秒',
+      healthScore: Math.max(0, Math.min(100, Math.round(successRate - failedRuns + activeCount))),
+    };
+  }
+
+  function buildCockpitFailureBars(ranking = []) {
+    const rows = Array.isArray(ranking) && ranking.length > 0
+      ? ranking
+      : [
+        { label: '验证码', count: 0 },
+        { label: '页面元素', count: 0 },
+        { label: '网络异常', count: 0 },
+        { label: '数据异常', count: 0 },
+      ];
+    const topRows = rows.slice(0, 5);
+    const maxCount = Math.max(1, ...topRows.map((item) => Number(item.count || 0)));
+    return topRows.map((item, index) => ({
+      ...item,
+      key: `${item.label || item.type || 'failure'}-${index}`,
+      percent: Math.max(8, Math.round((Number(item.count || 0) / maxCount) * 100)),
+    }));
+  }
+
   function pageLogs(run, page) {
     const logs = run && Array.isArray(run.logs) ? run.logs : [];
     if (page !== 'flash') {
@@ -533,6 +647,13 @@
       const dashboardStats = ref({ totalRuns: 0, successRateText: '0%', averageDurationText: '0秒', failureRanking: [] });
       const serverCapabilities = ref({ collectSources: [] });
       const statusTimer = ref(null);
+      const nowTick = ref(Date.now());
+      const cockpitTypeChart = ref(null);
+      const cockpitHealthChart = ref(null);
+      const cockpitRankChart = ref(null);
+      const cockpitTrendChart = ref(null);
+      const cockpitFlowChart = ref(null);
+      const cockpitCharts = {};
       const captchaCode = ref('');
       const captchaSubmitting = ref(false);
       const lastAutoFilledCaptchaId = ref('');
@@ -778,6 +899,73 @@
           ? dashboardStats.value.failureRanking
           : []
       ));
+      const cockpitOverview = computed(() => buildCockpitOverview({
+        historyRows: history.value,
+        currentRun: currentRun.value,
+        queueRows: queue.value,
+        stats: dashboardStats.value || {},
+      }));
+      const cockpitModuleCards = computed(() => buildCockpitModuleCards(history.value));
+      const cockpitFailureBars = computed(() => buildCockpitFailureBars(failureRanking.value));
+      const cockpitTrendPoints = computed(() => buildCockpitTrend(history.value));
+      const cockpitClockText = computed(() => formatDate(nowTick.value));
+      const cockpitCurrentTaskText = computed(() => (
+        currentRun.value && currentRun.value.status === 'running'
+          ? buildTaskText(currentRun.value)
+          : '暂无运行任务'
+      ));
+      const cockpitRecentLogs = computed(() => {
+        const runLogs = currentRun.value && Array.isArray(currentRun.value.logs)
+          ? currentRun.value.logs.filter((entry) => isUsefulLogEntry(entry)).slice(-6)
+          : [];
+        if (runLogs.length > 0) {
+          return runLogs;
+        }
+        return history.value.slice(0, 6).map((run) => ({
+          time: run.startedAt,
+          stream: run.status === 'error' ? 'stderr' : 'system',
+          text: `${STATUS_TEXT[run.status] || run.status}：${buildTaskText(run)}`,
+        }));
+      });
+      const cockpitDatastoreRows = computed(() => {
+        const total = Math.max(1, cockpitOverview.value.processedCount || 1);
+        return cockpitModuleCards.value.map((item, index) => ({
+          key: item.key,
+          name: item.label,
+          count: `${item.successCount || item.runCount}/${Math.max(1, item.runCount || cockpitOverview.value.totalRuns || 1)}`,
+          percent: Math.max(8, Math.min(100, Math.round(((item.successCount || item.runCount || 1) / total) * 100))),
+          accent: ['aws', 'azure', 'okta', 'slack'][index % 4],
+        }));
+      });
+      const cockpitIdentityRows = computed(() => {
+        const sourceRuns = history.value.slice(0, 8);
+        const rows = sourceRuns.length > 0
+          ? sourceRuns.map((run, index) => {
+            const page = historyPageForRun(run);
+            const metricCount = cockpitRunBusinessCount(run);
+            return {
+              key: run.id || `${page}-${index}`,
+              name: moduleLabelForPage(page),
+              email: maskPhoneText((run.account && run.account.label) || (defaultAccount.value && defaultAccount.value.label) || 'local@miaoshou'),
+              createdAt: formatDate(run.startedAt),
+              lastUsed: formatDate(run.endedAt || run.startedAt),
+              platforms: ['G', 'A', 'S', 'T'].slice(0, 2 + (index % 3)),
+              riskLevel: run.status === 'error' ? 'Open' : (run.status === 'stopped' ? 'Review' : 'Safe'),
+              score: Math.max(8, Math.min(100, metricCount * 8 + 24)),
+            };
+          })
+          : cockpitModuleCards.value.map((item, index) => ({
+            key: item.key,
+            name: item.label,
+            email: 'waiting@miaoshou',
+            createdAt: '--',
+            lastUsed: '--',
+            platforms: ['G', 'A', 'S'].slice(0, 2 + (index % 2)),
+            riskLevel: 'Ready',
+            score: Math.max(10, item.runCount * 12 + 18),
+          }));
+        return rows.slice(0, 7);
+      });
       const homeDisplayRun = computed(() => currentRun.value || null);
       const homeRunPage = computed(() => (
         homeDisplayRun.value ? historyPageForRun(homeDisplayRun.value) : 'products'
@@ -1791,8 +1979,246 @@
         logBox.value.scrollTop = logBox.value.scrollHeight;
       }
 
+      function resizeCockpitVisuals() {
+        Object.values(cockpitCharts).forEach((chart) => chart && chart.resize());
+      }
+
+      function chartGradient(colors) {
+        if (!window.echarts || !window.echarts.graphic) {
+          return colors[0];
+        }
+        return new window.echarts.graphic.LinearGradient(0, 0, 1, 0, colors.map((color, index) => ({
+          offset: colors.length === 1 ? 0 : index / (colors.length - 1),
+          color,
+        })));
+      }
+
+      function chartInstance(key, elementRef) {
+        const element = elementRef.value;
+        if (!element || !window.echarts) {
+          return null;
+        }
+        if (!cockpitCharts[key]) {
+          cockpitCharts[key] = window.echarts.init(element, null, { renderer: 'canvas' });
+        }
+        return cockpitCharts[key];
+      }
+
+      function disposeCockpitCharts() {
+        Object.keys(cockpitCharts).forEach((key) => {
+          cockpitCharts[key] && cockpitCharts[key].dispose();
+          delete cockpitCharts[key];
+        });
+      }
+
+      function renderCockpitCharts() {
+        if (currentPage.value !== DASHBOARD_PAGE_KEY || !window.echarts) {
+          return;
+        }
+        const moduleCards = cockpitModuleCards.value;
+        const failureBars = cockpitFailureBars.value;
+        const trendPoints = cockpitTrendPoints.value;
+        const successRate = Number.parseFloat(String(cockpitOverview.value.successRateText || '0').replace(/[^\d.]/g, '')) || 0;
+        const healthScore = Number(cockpitOverview.value.healthScore || 0);
+        const typeChart = chartInstance('type', cockpitTypeChart);
+        typeChart && typeChart.setOption({
+          animationDuration: 1000,
+          color: ['#ff3fca', '#8a5cff', '#35ffd0', '#f5b7ff'],
+          tooltip: { trigger: 'item', backgroundColor: 'rgba(15, 10, 22, 0.94)', borderColor: '#ff3fca', textStyle: { color: '#f8efff' } },
+          series: [{
+            type: 'pie',
+            radius: ['42%', '74%'],
+            center: ['50%', '52%'],
+            roseType: 'radius',
+            data: moduleCards.map((item) => ({ name: item.label, value: Math.max(1, item.runCount) })),
+            label: { show: false },
+            labelLine: { show: false },
+            itemStyle: { borderColor: '#100b18', borderWidth: 2, shadowBlur: 18, shadowColor: 'rgba(255,63,202,.32)' },
+          }],
+        });
+
+        const healthChart = chartInstance('health', cockpitHealthChart);
+        healthChart && healthChart.setOption({
+          animationDuration: 900,
+          series: [
+            {
+              type: 'gauge',
+              startAngle: 210,
+              endAngle: -30,
+              min: 0,
+              max: 100,
+              radius: '82%',
+              center: ['31%', '56%'],
+              progress: { show: true, width: 13, itemStyle: { color: chartGradient(['#35ffd0', '#8a5cff', '#ff3fca']) } },
+              axisLine: { lineStyle: { width: 13, color: [[1, 'rgba(255,255,255,.08)']] } },
+              splitLine: { show: false },
+              axisTick: { show: false },
+              axisLabel: { show: false },
+              pointer: { show: false },
+              detail: { valueAnimation: true, offsetCenter: [0, '4%'], color: '#fff', fontSize: 24, formatter: '{value}' },
+              title: { offsetCenter: [0, '38%'], color: 'rgba(246,232,255,.62)', fontSize: 10 },
+              data: [{ value: healthScore, name: '稳定' }],
+            },
+            {
+              type: 'gauge',
+              startAngle: 210,
+              endAngle: -30,
+              min: 0,
+              max: 100,
+              radius: '70%',
+              center: ['76%', '56%'],
+              progress: { show: true, width: 11, itemStyle: { color: chartGradient(['#8a5cff', '#ff3fca']) } },
+              axisLine: { lineStyle: { width: 11, color: [[1, 'rgba(255,255,255,.08)']] } },
+              splitLine: { show: false },
+              axisTick: { show: false },
+              axisLabel: { show: false },
+              pointer: { show: false },
+              detail: { valueAnimation: true, offsetCenter: [0, '2%'], color: '#fff', fontSize: 19, formatter: '{value}%' },
+              title: { offsetCenter: [0, '38%'], color: 'rgba(246,232,255,.62)', fontSize: 10 },
+              data: [{ value: successRate, name: '成功率' }],
+            },
+          ],
+        });
+
+        const rankChart = chartInstance('rank', cockpitRankChart);
+        rankChart && rankChart.setOption({
+          animationDuration: 900,
+          grid: { left: 94, right: 28, top: 16, bottom: 18 },
+          xAxis: { type: 'value', show: false },
+          yAxis: {
+            type: 'category',
+            inverse: true,
+            data: failureBars.map((item, index) => `NO.${index + 1} ${item.label}`),
+            axisLine: { show: false },
+            axisTick: { show: false },
+            axisLabel: { color: 'rgba(234,247,255,.72)', fontSize: 11 },
+          },
+          series: [{
+            type: 'bar',
+            data: failureBars.map((item) => item.count),
+            barWidth: 8,
+            itemStyle: {
+              borderRadius: 999,
+              color: chartGradient(['#35ffd0', '#ff3fca']),
+            },
+            label: { show: true, position: 'right', color: '#f7fbff', fontSize: 12, fontWeight: 700 },
+          }],
+        });
+
+        const flowChart = chartInstance('flow', cockpitFlowChart);
+        flowChart && flowChart.setOption({
+          animationDuration: 1000,
+          tooltip: { trigger: 'item', backgroundColor: 'rgba(15, 10, 22, 0.94)', borderColor: '#ff3fca', textStyle: { color: '#f8efff' } },
+          series: [{
+            type: 'graph',
+            layout: 'force',
+            roam: false,
+            draggable: false,
+            force: { repulsion: 120, edgeLength: [42, 82], gravity: 0.08 },
+            symbolSize: (value) => Math.max(22, Math.min(48, Number(value) || 24)),
+            data: [
+              { name: 'Workbench', value: 48, itemStyle: { color: '#ff3fca' }, label: { show: true } },
+              ...moduleCards.map((item, index) => ({
+                name: item.label,
+                value: Math.max(22, Math.min(44, item.runCount * 6 + 22)),
+                itemStyle: { color: ['#35ffd0', '#8a5cff', '#ff3fca', '#f7c95f'][index % 4] },
+                label: { show: true },
+              })),
+              { name: 'Queue', value: Math.max(22, cockpitOverview.value.queueCount * 6 + 22), itemStyle: { color: '#35ffd0' }, label: { show: true } },
+            ],
+            links: [
+              ...moduleCards.map((item) => ({
+                source: 'Workbench',
+                target: item.label,
+                value: Math.max(1, item.runCount),
+                lineStyle: { color: 'rgba(255,63,202,.55)', width: 1 + Math.min(4, item.runCount) },
+              })),
+              ...moduleCards.slice(0, 3).map((item) => ({
+                source: item.label,
+                target: 'Queue',
+                lineStyle: { color: 'rgba(53,255,208,.48)', curveness: 0.18 },
+              })),
+            ],
+            label: { color: 'rgba(248,239,255,.74)', fontSize: 10 },
+            lineStyle: { opacity: 0.72, curveness: 0.22 },
+            emphasis: { focus: 'adjacency' },
+          }],
+        });
+
+        const trendChart = chartInstance('trend', cockpitTrendChart);
+        trendChart && trendChart.setOption({
+          animationDuration: 1100,
+          grid: { left: 34, right: 22, top: 24, bottom: 30 },
+          tooltip: { trigger: 'axis', backgroundColor: 'rgba(15, 10, 22, 0.94)', borderColor: '#ff3fca', textStyle: { color: '#f8efff' } },
+          xAxis: {
+            type: 'category',
+            data: trendPoints.map((item) => item.label),
+            axisLine: { lineStyle: { color: 'rgba(255,255,255,.10)' } },
+            axisTick: { show: false },
+            axisLabel: { color: 'rgba(234,247,255,.48)', fontSize: 10 },
+          },
+          yAxis: {
+            type: 'value',
+            splitLine: { lineStyle: { color: 'rgba(255,255,255,.055)' } },
+            axisLabel: { color: 'rgba(234,247,255,.38)', fontSize: 10 },
+          },
+          series: [
+            {
+              type: 'bar',
+              data: trendPoints.map((item) => item.value),
+              barWidth: 18,
+              itemStyle: { borderRadius: [10, 10, 2, 2], color: chartGradient(['rgba(53,255,208,.34)', '#ff3fca']) },
+            },
+            {
+              type: 'line',
+              smooth: true,
+              symbol: 'circle',
+              symbolSize: 6,
+              data: trendPoints.map((item) => item.value),
+              lineStyle: { width: 2, color: '#ff3fca' },
+              itemStyle: { color: '#ffffff', borderColor: '#ff3fca', borderWidth: 2 },
+              areaStyle: {
+                color: new window.echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: 'rgba(255,63,202,.30)' },
+                  { offset: 1, color: 'rgba(138,92,255,0)' },
+                ]),
+              },
+            },
+          ],
+        });
+      }
+
+      async function initCockpitCharts() {
+        if (currentPage.value !== DASHBOARD_PAGE_KEY) {
+          return;
+        }
+        await nextTick();
+        renderCockpitCharts();
+        resizeCockpitVisuals();
+      }
+
       watch(() => visibleLogs.value.length, keepLogPinned);
       watch(currentPage, updateDocumentTitle, { immediate: true });
+      watch(currentPage, async (page) => {
+        if (page === DASHBOARD_PAGE_KEY) {
+          await nextTick();
+          await initCockpitCharts();
+        } else {
+          disposeCockpitCharts();
+        }
+      });
+      watch([
+        cockpitOverview,
+        cockpitModuleCards,
+        cockpitFailureBars,
+        cockpitTrendPoints,
+      ], async () => {
+        if (currentPage.value !== DASHBOARD_PAGE_KEY) {
+          return;
+        }
+        await nextTick();
+        renderCockpitCharts();
+      }, { deep: true });
       watch(themeName, applyTheme);
       watch(captchaCode, onCaptchaInput);
 
@@ -1801,13 +2227,19 @@
         await loadAccounts();
         await loadConfig();
         await fetchStatus();
-        statusTimer.value = window.setInterval(fetchStatus, 1000);
+        statusTimer.value = window.setInterval(() => {
+          nowTick.value = Date.now();
+          fetchStatus();
+        }, 1000);
+        await nextTick();
+        await initCockpitCharts();
       });
 
       onBeforeUnmount(() => {
         if (statusTimer.value) {
           window.clearInterval(statusTimer.value);
         }
+        disposeCockpitCharts();
       });
 
       return {
@@ -1833,6 +2265,20 @@
         collectProgress,
         collectTaskSummary,
         configFieldPlaceholder,
+        cockpitClockText,
+        cockpitCurrentTaskText,
+        cockpitDatastoreRows,
+        cockpitFailureBars,
+        cockpitFlowChart,
+        cockpitHealthChart,
+        cockpitIdentityRows,
+        cockpitModuleCards,
+        cockpitOverview,
+        cockpitRankChart,
+        cockpitRecentLogs,
+        cockpitTrendChart,
+        cockpitTrendPoints,
+        cockpitTypeChart,
         configAccountOptions,
         configAccountsTouched,
         configActiveTab,
@@ -1919,6 +2365,7 @@
         queuePaused,
         queueStatusText,
         moveQueueItem,
+        DASHBOARD_PAGE_KEY,
         NAV_PRODUCT_LIMIT_KEY,
         removeQueueItem,
         runProgress,
@@ -1962,8 +2409,9 @@
                   <p class="brand-subtitle">妙手自动化工作台</p>
                 </div>
               </div>
-              <a-menu :selected-keys="[currentNavKey]" mode="horizontal" trigger-sub-menu-action="hover" class="top-menu" @click="goPage">
+              <a-menu :selected-keys="[currentNavKey]" mode="horizontal" trigger-sub-menu-action="hover" :disabled-overflow="true" class="top-menu" @click="goPage">
                 <a-menu-item key="home">首页</a-menu-item>
+                <a-menu-item key="dashboard">数据大屏</a-menu-item>
                 <a-menu-item key="collect">商品采集</a-menu-item>
                 <a-sub-menu key="product-management" popup-class-name="top-submenu-popup">
                   <template #title>商品管理</template>
@@ -1988,7 +2436,7 @@
 
             <a-layout class="main-layout">
               <a-layout-content class="content-shell">
-                <section v-if="currentPage !== 'home'" class="page-hero">
+                <section v-if="currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY" class="page-hero">
                   <div>
                     <div class="eyebrow">当前页面</div>
                     <div class="page-title">{{ pageTitle }}</div>
@@ -2048,6 +2496,142 @@
                     <a-button v-if="currentPage !== 'home' && currentPage !== 'config'" size="large" :disabled="!isPageRunning" @click="stopRun">停止</a-button>
                   </div>
                 </section>
+
+              <section v-if="currentPage === DASHBOARD_PAGE_KEY" class="cockpit-screen">
+                <div class="cockpit-dashboard-stack">
+	                  <section class="cockpit-board cockpit-board-overview">
+	                    <header class="cockpit-board-nav">
+	                      <div class="cockpit-brand-mark" @click="navigateToPage('home')"><span></span></div>
+	                      <div class="cockpit-user-chip">
+	                        <span>{{ cockpitClockText }}</span>
+	                        <b>{{ currentRun ? STATUS_TEXT[currentRun.status] || currentRun.status : 'READY' }}</b>
+                      </div>
+                    </header>
+
+                    <div class="cockpit-reference-grid cockpit-reference-grid-top">
+                      <article class="cockpit-card cockpit-access-card">
+                        <div class="cockpit-card-head"><strong>Access type</strong><span>自动化入口</span></div>
+                        <div ref="cockpitTypeChart" class="cockpit-chart cockpit-type-chart"></div>
+                      </article>
+
+                      <article class="cockpit-card cockpit-datastore-card">
+                        <div class="cockpit-card-head"><strong>Identities datastore</strong><span>{{ cockpitOverview.totalRuns }} runs</span></div>
+                        <div class="cockpit-datastore-list">
+                          <div v-for="row in cockpitDatastoreRows" :key="row.key" class="cockpit-datastore-row">
+                            <span :class="['cockpit-dot', row.accent]"></span>
+                            <div>
+                              <b>{{ row.name }}</b>
+                              <i><em :style="{ width: row.percent + '%' }"></em></i>
+                            </div>
+                            <strong>{{ row.count }}</strong>
+                          </div>
+                        </div>
+                      </article>
+
+                      <article class="cockpit-card cockpit-risk-card">
+                        <div class="cockpit-card-head"><strong>Identity risk</strong><span>风险评分</span></div>
+                        <div ref="cockpitHealthChart" class="cockpit-chart cockpit-health-chart"></div>
+                      </article>
+                    </div>
+
+                    <article class="cockpit-card cockpit-table-card">
+                      <div class="cockpit-table-toolbar">
+                        <strong>808 Identities</strong>
+                        <div><button>Search</button><button>Filter</button></div>
+                      </div>
+                      <div class="cockpit-identity-table">
+                        <div class="cockpit-table-row cockpit-table-head">
+                          <span>Name</span><span>Email</span><span>Creation Date</span><span>Last Used</span><span>Platforms</span><span>Risk Level</span>
+                        </div>
+                        <div v-for="row in cockpitIdentityRows" :key="row.key" class="cockpit-table-row">
+                          <span><i class="cockpit-avatar">{{ row.name.slice(0, 1) }}</i>{{ row.name }}</span>
+                          <span>{{ row.email }}</span>
+                          <span>{{ row.createdAt }}</span>
+                          <span>{{ row.lastUsed }}</span>
+                          <span class="cockpit-platform-icons"><b v-for="platform in row.platforms" :key="platform">{{ platform }}</b></span>
+                          <span><em class="cockpit-risk-pill">{{ row.riskLevel }}</em><i class="cockpit-risk-meter"><small :style="{ width: row.score + '%' }"></small></i></span>
+                        </div>
+                      </div>
+                    </article>
+                  </section>
+
+	                  <section class="cockpit-board cockpit-board-exposure">
+	                    <header class="cockpit-board-nav compact">
+	                      <div class="cockpit-brand-mark"><span></span></div>
+	                      <div class="cockpit-user-chip"><span>LOCAL-WORKBENCH 2026</span><b>{{ cockpitOverview.successRateText }}</b></div>
+	                    </header>
+
+                    <div class="cockpit-exposure-grid">
+                      <article class="cockpit-card cockpit-line-card">
+                        <div class="cockpit-card-head"><strong>Open and resolved exposures overtime</strong><span>24h trend</span></div>
+                        <div ref="cockpitTrendChart" class="cockpit-chart cockpit-trend-chart"></div>
+                      </article>
+                      <article class="cockpit-card cockpit-status-card">
+                        <div class="cockpit-card-head"><strong>Exposures status</strong><span>Open / In progress</span></div>
+                        <div class="cockpit-status-bars">
+                          <i style="height: 48%"></i><i style="height: 34%"></i><i style="height: 82%"></i><i style="height: 60%"></i><i style="height: 42%"></i>
+                        </div>
+                      </article>
+                      <article class="cockpit-card cockpit-datastore-card">
+                        <div class="cockpit-card-head"><strong>Identities datastore</strong><span>source mix</span></div>
+                        <div class="cockpit-datastore-list compact-list">
+                          <div v-for="row in cockpitDatastoreRows" :key="'exposure-' + row.key" class="cockpit-datastore-row">
+                            <span :class="['cockpit-dot', row.accent]"></span>
+                            <div><b>{{ row.name }}</b><i><em :style="{ width: row.percent + '%' }"></em></i></div>
+                            <strong>{{ row.count }}</strong>
+                          </div>
+                        </div>
+                      </article>
+                      <article class="cockpit-card cockpit-hygiene-card">
+                        <div class="cockpit-card-head"><strong>Hygiene & inactive identities</strong><span>{{ cockpitIdentityRows.length }} rows</span></div>
+                        <div class="cockpit-mini-table">
+                          <div v-for="row in cockpitIdentityRows.slice(0, 4)" :key="'hygiene-' + row.key"><span>{{ row.name }}</span><b>{{ row.platforms.length }}</b><i>{{ row.riskLevel }}</i></div>
+                        </div>
+                      </article>
+                    </div>
+                  </section>
+
+	                  <section class="cockpit-board cockpit-board-threats">
+	                    <header class="cockpit-board-nav compact">
+	                      <div class="cockpit-brand-mark"><span></span></div>
+	                      <div class="cockpit-user-chip"><span>当前任务</span><b>{{ cockpitCurrentTaskText }}</b></div>
+	                    </header>
+
+                    <div class="cockpit-threat-grid">
+                      <article class="cockpit-card">
+                        <div class="cockpit-card-head"><strong>Threats Tactics</strong><span>Last 12 Weeks</span></div>
+                        <div ref="cockpitRankChart" class="cockpit-chart cockpit-rank-chart"></div>
+                      </article>
+                      <article class="cockpit-card cockpit-global-card">
+                        <div class="cockpit-card-head"><strong>Global flow</strong><span>自动化链路</span></div>
+                        <div ref="cockpitFlowChart" class="cockpit-chart cockpit-flow-chart" aria-label="自动化链路图"></div>
+                      </article>
+                      <article class="cockpit-card cockpit-status-donut-card">
+                        <div class="cockpit-card-head"><strong>Threats status</strong><span>{{ cockpitOverview.healthScore }}</span></div>
+                        <div class="cockpit-mini-card-grid">
+                          <div><span>Open</span><b>{{ cockpitOverview.failedRuns }}</b></div>
+                          <div><span>Queue</span><b>{{ cockpitOverview.queueCount }}</b></div>
+                          <div><span>Active</span><b>{{ cockpitOverview.activeCount }}</b></div>
+                        </div>
+                      </article>
+                    </div>
+
+                    <article class="cockpit-card cockpit-table-card threat-table-card">
+                      <div class="cockpit-table-toolbar"><strong>Security threats</strong><div><button>Search</button><button>Filter</button></div></div>
+                      <div class="cockpit-identity-table compact-table">
+                        <div class="cockpit-table-row cockpit-table-head"><span>Entry</span><span>Type</span><span>Last activity</span><span>Risk level</span><span>Status</span></div>
+                        <div v-for="row in cockpitIdentityRows.slice(0, 5)" :key="'threat-' + row.key" class="cockpit-table-row">
+                          <span><i class="cockpit-avatar">{{ row.name.slice(0, 1) }}</i>{{ row.email }}</span>
+                          <span>{{ row.name }}</span>
+                          <span>{{ row.lastUsed }}</span>
+                          <span><i class="cockpit-risk-meter"><small :style="{ width: row.score + '%' }"></small></i></span>
+                          <span><em class="cockpit-risk-pill">{{ row.riskLevel }}</em></span>
+                        </div>
+                      </div>
+                    </article>
+                  </section>
+                </div>
+              </section>
 
               <section v-if="currentPage === 'home'" class="home-workbench">
                 <div class="home-status-grid">
@@ -2262,7 +2846,7 @@
                 </div>
               </section>
 
-              <section v-if="currentPage !== 'home'" class="work-grid">
+              <section v-if="currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY" class="work-grid">
                 <a-card v-if="currentPage === 'collect'" title="商品采集" class="soft-card task-card collect-panel">
                   <a-alert
                     type="info"
@@ -2535,10 +3119,10 @@
                             <div class="limit-store-preview-grid">
                               <div
                                 v-for="item in productLimitPreviewStores"
-                                :key="item.storeName || item.name || item"
+                                :key="item.storeSearchText || item.storeName || item.name || item"
                                 class="limit-store-preview-item"
                               >
-                                <span class="limit-store-name">{{ item.storeName || item.name || item }}</span>
+                                <span class="limit-store-name">{{ item.storeSearchText || item.storeName || item.name || item }}</span>
                                 <span class="limit-store-meta">
                                   <template v-if="item.failureCount">发布失败 {{ item.failureCount }} 条</template>
                                   <template v-else-if="item.unpublishedCount !== undefined">下架 {{ item.unpublishedCount }} 个</template>
@@ -2798,7 +3382,7 @@
                 </a-card>
               </section>
 
-              <a-card v-if="currentPage !== 'home' && currentPage !== 'config'" title="运行状态" class="soft-card run-panel">
+              <a-card v-if="currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY && currentPage !== 'config'" title="运行状态" class="soft-card run-panel">
                 <template #extra>
                   <a-space>
                     <a-button :disabled="!hasLogs" @click="clearLogs">清理日志</a-button>
@@ -2941,7 +3525,7 @@
                 </a-table>
               </a-card>
 
-              <a-card v-if="currentPage !== 'home' && currentPage !== 'config' && currentPage !== 'collect'" title="最近记录" class="soft-card history-panel">
+              <a-card v-if="currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY && currentPage !== 'config' && currentPage !== 'collect'" title="最近记录" class="soft-card history-panel">
                 <template #extra>
                   <a-button :disabled="!hasVisibleHistory" @click="clearHistory">清理记录</a-button>
                 </template>

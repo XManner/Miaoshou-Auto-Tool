@@ -34,6 +34,12 @@ assert.ok(
   'The old left sidebar navigation should be removed in favor of top navigation.',
 );
 assert.ok(
+  appSource.includes(':disabled-overflow="true"')
+    && /\.top-nav\.ant-layout-header\s*\{[^}]*grid-template-columns:\s*auto minmax\(760px,\s*1fr\) auto;/.test(styles)
+    && /\.top-menu\.ant-menu-horizontal\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*720px;/.test(styles),
+  'The desktop top navigation should reserve enough width and disable collapsed ellipsis overflow.',
+);
+assert.ok(
   appSource.includes('src="/assets/tiktok-shop-logo.png"')
     && appSource.includes('alt="TikTok Shop"')
     && appSource.includes('妙手自动化工作台')
@@ -43,9 +49,9 @@ assert.ok(
   'The main brand title should use the TikTok Shop logo instead of title text.',
 );
 assert.ok(
-  appSource.includes("v-if=\"currentPage !== 'home'\" class=\"page-hero\"")
-    && appSource.includes("<a-card v-if=\"currentPage !== 'home' && currentPage !== 'config'\" title=\"运行状态\""),
-  'The home and config pages should hide the run status panel.',
+  appSource.includes("v-if=\"currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY\" class=\"page-hero\"")
+    && appSource.includes("<a-card v-if=\"currentPage !== 'home' && currentPage !== DASHBOARD_PAGE_KEY && currentPage !== 'config'\" title=\"运行状态\""),
+  'The home, dashboard, and config pages should hide the normal run status panel.',
 );
 assert.ok(
   !appSource.includes("currentPage === 'home'\" class=\"home-grid\"")

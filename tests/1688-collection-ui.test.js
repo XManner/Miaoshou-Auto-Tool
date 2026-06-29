@@ -28,8 +28,8 @@ assert.ok(
   'The product editing workflow should live on the independent 编辑商品 page.',
 );
 assert.ok(
-  /<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-sub-menu key="product-management"[\s\S]*<template #title>商品管理<\/template>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="products-limit-stores">下架商品<\/a-menu-item>[\s\S]*<\/a-sub-menu>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>/.test(appSource),
-  'Navigation order should be 首页 | 商品采集 | 商品管理 | 秒杀管理.',
+  /<a-menu-item key="home">首页<\/a-menu-item>[\s\S]*<a-menu-item key="dashboard">数据大屏<\/a-menu-item>[\s\S]*<a-menu-item key="collect">商品采集<\/a-menu-item>[\s\S]*<a-sub-menu key="product-management"[\s\S]*<template #title>商品管理<\/template>[\s\S]*<a-menu-item key="products">编辑商品<\/a-menu-item>[\s\S]*<a-menu-item key="products-limit-stores">下架商品<\/a-menu-item>[\s\S]*<\/a-sub-menu>[\s\S]*<a-menu-item key="flash">秒杀管理<\/a-menu-item>/.test(appSource),
+  'Navigation order should be 首页 | 数据大屏 | 商品采集 | 商品管理 | 秒杀管理.',
 );
 assert.ok(
   appSource.includes('const collectForm = reactive({'),
@@ -203,14 +203,14 @@ assert.ok(
 );
 const collectionHistoryPanelSource = appSource.slice(
   appSource.indexOf('<a-card v-if="currentPage === \'collect\'" title="最近采集记录"'),
-  appSource.indexOf('<a-card v-if="currentPage !== \'home\' && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
+  appSource.indexOf('<a-card v-if="currentPage !== \'home\' && currentPage !== DASHBOARD_PAGE_KEY && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
 );
 assert.ok(
   !collectionHistoryPanelSource.includes('title="重量"'),
   'The collection history table should not show a weight column.',
 );
 assert.ok(
-  appSource.includes('<a-card v-if="currentPage !== \'home\' && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
+  appSource.includes('<a-card v-if="currentPage !== \'home\' && currentPage !== DASHBOARD_PAGE_KEY && currentPage !== \'config\' && currentPage !== \'collect\'" title="最近记录"'),
   'The shared recent task history panel should not replace product records on the collection page.',
 );
 

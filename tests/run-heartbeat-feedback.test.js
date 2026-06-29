@@ -34,7 +34,7 @@ assert.ok(
   'Runs should not need heartbeat cleanup when logs are event-driven.',
 );
 assert.ok(
-  appSource.includes('window.setInterval(fetchStatus, 1000);'),
+  /window\.setInterval\([\s\S]*fetchStatus\(\);[\s\S]*,\s*1000\);/.test(appSource),
   'The page may still refresh status every 1 second without writing log lines.',
 );
 

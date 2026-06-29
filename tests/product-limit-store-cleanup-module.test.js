@@ -9,13 +9,17 @@ const {
   buildMatchedLimitStoreRecords,
   buildLimitStoreSummary,
   dedupeLimitStoreRecords,
+  formatStoreLogName,
   parseProductPageSizeFromTexts,
+  parseUnpublishOperationResultText,
   parseVisibleProductResultCountFromTexts,
   shouldSkipUnpublishByZeroSalesCount,
   looksLikeSelectedStoreText,
   matchesProductLimitFailureReason,
   normalizeStoreName,
+  normalizeStoreOptionText,
   normalizeZeroSalesRetainCount,
+  summarizeUnmatchedFailureRecords,
 } = cleanupRules;
 
 const matchingReason = '发布失败：商店试用期，最多只能使用1000个产品列表。';
@@ -37,6 +41,11 @@ assert.strictEqual(
   'Whitespace inside a matching reason should be ignored.',
 );
 assert.strictEqual(
+  matchesProductLimitFailureReason('你目前处于商店试用期。根据您的试用级别，目前最多只能使用 1,000 个产品列表。'),
+  true,
+  'Commas in the product-limit number should be ignored.',
+);
+assert.strictEqual(
   matchesProductLimitFailureReason('发布失败：商店试用期'),
   false,
   'Failure reason should not match when only the trial-store phrase is present.',
@@ -56,6 +65,21 @@ assert.strictEqual(
   normalizeStoreName('  X SEVEN SHOP PH-菲律宾  '),
   'X SEVEN SHOP PH',
   'Store normalization should trim and remove supported country suffixes.',
+);
+assert.strictEqual(
+  normalizeStoreName('  SEXY VOICE 菲律宾  '),
+  'SEXY VOICE',
+  'Store normalization should also remove publish-record country text without a dash.',
+);
+assert.strictEqual(
+  normalizeStoreOptionText('SEXY VOICE 菲律宾'),
+  'SEXY VOICE-菲律宾',
+  'Publish-record store display text should normalize to the explicit store option text.',
+);
+assert.strictEqual(
+  formatStoreLogName({ storeSearchText: 'SEXY VOICE 菲律宾', storeName: 'SEXY VOICE' }),
+  'SEXY VOICE 菲律宾',
+  'Store log text should prefer the original publish-record store text.',
 );
 assert.strictEqual(
   looksLikeSelectedStoreText('Buding lucky PH-菲律宾'),
@@ -166,6 +190,28 @@ assert.ok(
   'Store selection should use the focused store-search input Backspace fallback to remove selected stores when close icons are unreliable.',
 );
 assert.ok(
+  cleanupSource.includes('waitForFailurePageRecordsSettled')
+    && sourceBetween('async function scanProductLimitFailureStores', 'async function selectExactStore').includes('waitForFailurePageRecordsSettled(page)')
+    && sourceBetween('async function waitForFailurePageRecordsSettled', 'async function clickCurrentPageSelectAllCheckbox').includes('stableRounds'),
+  'Publish-failure scanning should wait until the failure list is populated and stable before counting rows.',
+);
+assert.ok(
+  sourceBetween('async function extractFailurePageRecords', 'async function waitForFailurePageRecordsSettled').includes('[title], [aria-label], [data-title]')
+    && sourceBetween('async function extractFailurePageRecords', 'async function waitForFailurePageRecordsSettled').includes('collectAttributeText'),
+  'Publish-failure extraction should include tooltip/title text because Miaoshou may keep full failure reasons outside visible innerText.',
+);
+assert.ok(
+  sourceBetween('async function extractFailurePageRecords', 'async function waitForFailurePageRecordsSettled').includes('storeDisplayCountryPattern')
+    && sourceBetween('async function extractFailurePageRecords', 'async function waitForFailurePageRecordsSettled').includes('storeSearchText: storeCandidate')
+    && sourceBetween('async function extractFailurePageRecords', 'async function waitForFailurePageRecordsSettled').includes('...cells, ...lines'),
+  'Publish-failure extraction should preserve store-name cells such as "SEXY VOICE 菲律宾" for direct search instead of rebuilding the format.',
+);
+assert.ok(
+  sourceBetween('async function extractFailurePageRecords', 'async function waitForFailurePageRecordsSettled').includes('normalizeStoreNameText(text)')
+    && sourceBetween('async function extractFailurePageRecords', 'async function waitForFailurePageRecordsSettled').includes('storeNameText'),
+  'Publish-failure store-name validation should validate the store body separately from the Chinese country suffix.',
+);
+assert.ok(
   sourceBetween('async function removeExistingStoreSelections', 'async function assertNoExistingStoreSelection').includes('existingCount <= 0')
     && sourceBetween('async function removeExistingStoreSelections', 'async function assertNoExistingStoreSelection').includes('clickExistingStoreSelectionClose(page)')
     && sourceBetween('async function removeExistingStoreSelections', 'async function assertNoExistingStoreSelection').includes('visible close button can still exist'),
@@ -250,7 +296,7 @@ assert.ok(
 assert.ok(
   cleanupSource.includes('DEFAULT_ZERO_SALES_RETAIN_COUNT')
     && cleanupSource.includes('zeroSalesProductCount')
-    && cleanupSource.includes('零销量商品不超过 ${zeroSalesRetainCount} 个'),
+    && cleanupSource.includes('${storeLogName}：零销量商品不超过 ${zeroSalesRetainCount} 个'),
   'Cleanup should keep a configurable zero-sales retain count before down-shelving.',
 );
 assert.ok(
@@ -376,6 +422,18 @@ assert.ok(
   'Unpublish should use the top bulk 更多 menu and prefer the 下架产品 dropdown action instead of row-level 下架 links.',
 );
 assert.ok(
+  sourceBetween('async function unpublishCurrentPageProducts', 'async function cleanupLimitStoreProducts').includes('waitForUnpublishOperationResult')
+    && sourceBetween('async function unpublishCurrentPageProducts', 'async function cleanupLimitStoreProducts').includes('failureCount'),
+  'Unpublish should wait for the operation result and keep the failure count instead of treating any success text as completion.',
+);
+assert.ok(
+  sourceBetween('async function cleanupLimitStoreProducts', 'async function recoverAfterStoreCleanupFailure').includes('unpublishResult')
+    && sourceBetween('async function cleanupLimitStoreProducts', 'async function recoverAfterStoreCleanupFailure').includes('failureCount')
+    && sourceBetween('async function cleanupLimitStoreProducts', 'async function recoverAfterStoreCleanupFailure').includes('会重新筛选当前店铺继续下架')
+    && sourceBetween('async function cleanupLimitStoreProducts', 'async function recoverAfterStoreCleanupFailure').includes('continue'),
+  'Store cleanup should retry the same store when the final down-shelve result still has failures.',
+);
+assert.ok(
   sourceBetween('async function clickTopBulkMoreDropdown', 'async function clickVisibleDropdownAction').includes('bulkToolbarLabels')
     && sourceBetween('async function clickTopBulkMoreDropdown', 'async function clickVisibleDropdownAction').includes('批量编辑')
     && sourceBetween('async function clickTopBulkMoreDropdown', 'async function clickVisibleDropdownAction').includes('复制产品')
@@ -435,6 +493,21 @@ assert.strictEqual(
   null,
   'Page-size options such as 100条/页 should not be misread as product totals.',
 );
+assert.deepStrictEqual(
+  parseUnpublishOperationResultText('总计 100 个，成功 98 个，失败 2 个'),
+  {
+    totalCount: 100,
+    successCount: 98,
+    failureCount: 2,
+    unfinishedCount: null,
+  },
+  'Unpublish result parser should read total, success, and failure counts from the result dialog.',
+);
+assert.strictEqual(
+  parseUnpublishOperationResultText('未完成：3，成功：97，失败：0').unfinishedCount,
+  3,
+  'Unpublish result parser should read unfinished counts so the caller can wait or retry.',
+);
 assert.ok(
   sourceBetween('async function cleanupLimitStoreProducts', 'async function recoverAfterStoreCleanupFailure').includes('无法确认零销量商品数，已跳过下架')
     && sourceBetween('async function cleanupLimitStoreProducts', 'async function recoverAfterStoreCleanupFailure').includes('!Number.isFinite(Number(zeroSalesProductCount))'),
@@ -491,26 +564,36 @@ assert.deepStrictEqual(
   buildMatchedLimitStoreRecords([
     { storeName: 'X SEVEN SHOP PH', reason: matchingReason },
     { storeName: 'X FIVE SHOP PH', reason: matchingReason },
+    { storeName: 'SEXY VOICE 菲律宾', storeSearchText: 'SEXY VOICE 菲律宾', reason: matchingReason },
     { storeName: 'BEAUTY LIFE MY', reason: '最多只能使用1000个产品列表，商店试用期' },
   ]),
   [
     {
       storeName: 'X SEVEN SHOP PH',
       storeOptionText: '',
+      storeSearchText: 'X SEVEN SHOP PH',
       failureCount: 1,
     },
     {
       storeName: 'X FIVE SHOP PH',
       storeOptionText: '',
+      storeSearchText: 'X FIVE SHOP PH',
+      failureCount: 1,
+    },
+    {
+      storeName: 'SEXY VOICE 菲律宾',
+      storeOptionText: '',
+      storeSearchText: 'SEXY VOICE 菲律宾',
       failureCount: 1,
     },
     {
       storeName: 'BEAUTY LIFE MY',
       storeOptionText: '',
+      storeSearchText: 'BEAUTY LIFE MY',
       failureCount: 1,
     },
   ],
-  'Matched publish-failure stores should keep the failed store name without inferring country suffixes.',
+  'Matched publish-failure stores should keep the failed store text for direct search without inferring country suffixes.',
 );
 
 assert.deepStrictEqual(
@@ -522,10 +605,11 @@ assert.deepStrictEqual(
     { storeName: '', reason: matchingReason },
   ]),
   [
-    { storeName: 'X SEVEN SHOP PH', failureCount: 2 },
-    { storeName: 'BEAUTY LIFE', failureCount: 1 },
+    { storeName: 'X SEVEN SHOP PH-菲律宾', storeSearchText: 'X SEVEN SHOP PH-菲律宾', failureCount: 1 },
+    { storeName: 'X SEVEN SHOP PH', storeSearchText: 'X SEVEN SHOP PH', failureCount: 1 },
+    { storeName: 'BEAUTY LIFE-马来', storeSearchText: 'BEAUTY LIFE-马来', failureCount: 1 },
   ],
-  'Limit store records should normalize, dedupe, count, and return only matched stores.',
+  'Limit store records should keep the source store text for direct search and return only matched stores.',
 );
 
 assert.deepStrictEqual(
@@ -543,6 +627,9 @@ assert.deepStrictEqual(
       { storeName: 'BROKEN STORE', error: '页面加载失败', unpublishedCount: 4 },
     ],
     failedItems: [{ storeName: 'BROKEN STORE', reason: '页面加载失败' }],
+    unmatchedFailureRecords: [
+      { storeName: 'IGNORED SHOP PH', reasonPreview: '发布失败：库存不足' },
+    ],
   }),
   {
     mode: 'product-limit-store-unpublish',
@@ -552,6 +639,9 @@ assert.deepStrictEqual(
       { storeName: 'X SEVEN SHOP PH', failureCount: 2 },
       { storeName: 'BEAUTY LIFE', failureCount: 1 },
       { storeName: 'QUIET STORE', failureCount: 1 },
+    ],
+    unmatchedFailureRecords: [
+      { storeName: 'IGNORED SHOP PH', reasonPreview: '发布失败：库存不足' },
     ],
     matchedStoreCount: 3,
     processedStoreCount: 1,
@@ -569,6 +659,36 @@ assert.deepStrictEqual(
     ],
   },
   'Limit store summary should preserve results and aggregate processed, skipped, and unpublished counts.',
+);
+
+assert.deepStrictEqual(
+  summarizeUnmatchedFailureRecords([
+    { storeName: 'X SEVEN SHOP PH', reason: matchingReason },
+    { storeName: '', reason: matchingReason },
+    { storeName: 'IGNORED SHOP PH', reason: '发布失败：库存不足，请稍后重试' },
+    { storeName: 'ONLY TRIAL SHOP MY', reason: '发布失败：商店试用期' },
+  ]),
+  [
+    {
+      storeName: '',
+      storeOptionText: '',
+      storeSearchText: '',
+      reasonPreview: `已匹配上限原因，但没有解析到店铺名：${matchingReason}`,
+    },
+    {
+      storeName: 'IGNORED SHOP PH',
+      storeOptionText: '',
+      storeSearchText: 'IGNORED SHOP PH',
+      reasonPreview: '发布失败：库存不足，请稍后重试',
+    },
+    {
+      storeName: 'ONLY TRIAL SHOP MY',
+      storeOptionText: '',
+      storeSearchText: 'ONLY TRIAL SHOP MY',
+      reasonPreview: '发布失败：商店试用期',
+    },
+  ],
+  'Unmatched failure diagnostics should keep short reason previews for scanned rows that do not hit the product-limit rule.',
 );
 
 console.log('product limit store cleanup module checks passed');
