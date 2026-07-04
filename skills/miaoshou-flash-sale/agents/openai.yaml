@@ -1,0 +1,4 @@
+interface:
+  display_name: "妙手限时秒杀"
+  short_description: "批量处理妙手 ERP TikTok 限时秒杀活动产品和折扣。"
+  default_prompt: "按妙手限时秒杀流程处理进行中活动：进入管理产品，添加产品，筛选未设置秒杀价产品，按活动名折扣批量设置并提交。"

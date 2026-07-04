@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>妙手自动化数据大屏方向稿</title>
+  <style>
+    :root {
+      --bg: #05061b;
+      --panel: rgba(12, 21, 55, .58);
+      --panel-strong: rgba(16, 29, 74, .76);
+      --line: rgba(105, 224, 255, .32);
+      --cyan: #38f5ff;
+      --blue: #4f7dff;
+      --violet: #a855f7;
+      --pink: #ff61d8;
+      --text: #eaf7ff;
+      --muted: rgba(234, 247, 255, .62);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      color: var(--text);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 52% 34%, rgba(80, 112, 255, .28), transparent 32rem),
+        radial-gradient(circle at 72% 12%, rgba(168, 85, 247, .22), transparent 24rem),
+        radial-gradient(circle at 16% 78%, rgba(34, 211, 238, .16), transparent 23rem),
+        linear-gradient(135deg, #06071c 0%, #090b2a 48%, #12072b 100%);
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(rgba(99, 179, 237, .06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99, 179, 237, .05) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: radial-gradient(circle at 50% 44%, black, transparent 75%);
+      pointer-events: none;
+    }
+    body::after {
+      content: "";
+      position: fixed;
+      inset: -30%;
+      background:
+        conic-gradient(from 120deg at 50% 50%, transparent, rgba(56, 245, 255, .10), transparent, rgba(255, 97, 216, .10), transparent);
+      animation: aurora 14s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes aurora {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+      50% { opacity: .46; transform: scale(1.05); }
+    }
+    @keyframes float {
+      50% { transform: translateY(-10px); }
+    }
+    @keyframes stream {
+      from { stroke-dashoffset: 240; }
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes scan {
+      to { transform: translateX(100%); }
+    }
+    .screen {
+      position: relative;
+      z-index: 1;
+      width: 100vw;
+      height: 100vh;
+      padding: 22px 30px 26px;
+    }
+    .topline {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 24px;
+      height: 64px;
+    }
+    .topline::before,
+    .topline::after {
+      content: "";
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(56, 245, 255, .72), transparent);
+      box-shadow: 0 0 18px rgba(56, 245, 255, .45);
+    }
+    .title {
+      min-width: 560px;
+      text-align: center;
+      letter-spacing: .08em;
+    }
+    .title h1 {
+      margin: 0;
+      font-size: clamp(24px, 2vw, 34px);
+      font-weight: 900;
+      text-shadow: 0 0 24px rgba(56, 245, 255, .5);
+    }
+    .title p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .14em;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 330px minmax(440px, 1fr) 360px;
+      grid-template-rows: minmax(0, 1fr) 260px;
+      gap: 18px;
+      height: calc(100vh - 88px);
+      margin-top: 18px;
+    }
+    .column {
+      display: grid;
+      gap: 16px;
+      min-height: 0;
+    }
+    .panel {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background:
+        linear-gradient(135deg, rgba(56, 245, 255, .09), transparent 42%),
+        linear-gradient(180deg, var(--panel-strong), var(--panel));
+      box-shadow:
+        inset 0 0 28px rgba(56, 245, 255, .07),
+        0 18px 50px rgba(0, 0, 0, .24);
+      backdrop-filter: blur(18px);
+    }
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(56, 245, 255, .14), transparent);
+      animation: scan 5s linear infinite;
+      pointer-events: none;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid rgba(105, 224, 255, .14);
+    }
+    .panel-head strong {
+      font-size: 14px;
+      letter-spacing: .08em;
+    }
+    .panel-head span {
+      color: var(--cyan);
+      font-size: 11px;
+    }
+    .panel-body { padding: 14px 16px 16px; }
+    .hero {
+      grid-row: span 1;
+      position: relative;
+      min-height: 0;
+      border-radius: 24px;
+      overflow: hidden;
+      border: 1px solid rgba(105, 224, 255, .28);
+      background:
+        radial-gradient(circle at 50% 46%, rgba(60, 160, 255, .25), transparent 26rem),
+        rgba(6, 10, 32, .34);
+    }
+    .globe {
+      position: absolute;
+      left: 50%;
+      top: 46%;
+      width: min(52vw, 650px);
+      aspect-ratio: 1;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 34% 28%, rgba(255,255,255,.28), transparent 8%),
+        radial-gradient(circle at 44% 42%, rgba(74, 144, 255, .68), rgba(41, 62, 148, .52) 38%, rgba(10, 18, 60, .10) 66%, transparent 72%),
+        repeating-radial-gradient(circle, rgba(114, 209, 255, .11) 0 2px, transparent 2px 9px);
+      box-shadow:
+        inset -34px -28px 70px rgba(9, 10, 38, .82),
+        inset 20px 18px 50px rgba(126, 205, 255, .14),
+        0 0 76px rgba(84, 119, 255, .38);
+      animation: float 7s ease-in-out infinite;
+    }
+    .globe::before {
+      content: "";
+      position: absolute;
+      inset: 9%;
+      border-radius: 50%;
+      border: 1px solid rgba(146, 233, 255, .26);
+      background:
+        linear-gradient(20deg, transparent 45%, rgba(255,255,255,.18) 46% 47%, transparent 48%),
+        linear-gradient(80deg, transparent 48%, rgba(255,255,255,.12) 49% 50%, transparent 51%),
+        linear-gradient(145deg, transparent 48%, rgba(255,255,255,.10) 49% 50%, transparent 51%);
+      transform: rotate(-18deg);
+    }
+    .globe::after {
+      content: "";
+      position: absolute;
+      inset: -12%;
+      border-radius: 50%;
+      border: 2px solid rgba(168, 85, 247, .32);
+      box-shadow: 0 0 34px rgba(168, 85, 247, .35);
+      transform: rotateX(62deg) rotateZ(-16deg);
+    }
+    .arc-layer {
+      position: absolute;
+      inset: 0;
+      opacity: .9;
+    }
+    .arc-layer path {
+      fill: none;
+      stroke-linecap: round;
+      stroke-width: 2;
+      stroke-dasharray: 18 16;
+      animation: stream 5s linear infinite;
+      filter: drop-shadow(0 0 10px rgba(56, 245, 255, .8));
+    }
+    .orbit-dot {
+      position: absolute;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 20px var(--cyan);
+      animation: pulse 2.6s ease-in-out infinite;
+    }
+    .dot-a { left: 44%; top: 34%; }
+    .dot-b { left: 58%; top: 43%; animation-delay: .4s; }
+    .dot-c { left: 37%; top: 52%; animation-delay: .8s; }
+    .center-chip {
+      position: absolute;
+      left: 50%;
+      top: 62%;
+      transform: translateX(-50%);
+      min-width: 240px;
+      padding: 14px 20px;
+      border: 1px solid rgba(56, 245, 255, .55);
+      border-radius: 999px;
+      text-align: center;
+      background: rgba(8, 18, 53, .72);
+      box-shadow: 0 0 32px rgba(56, 245, 255, .26);
+    }
+    .center-chip span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .center-chip strong {
+      display: block;
+      margin-top: 4px;
+      color: var(--cyan);
+      font-size: 30px;
+      letter-spacing: .04em;
+    }
+    .stats {
+      display: grid;
+      gap: 12px;
+    }
+    .stat {
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(105, 224, 255, .12);
+    }
+    .stat:last-child { border-bottom: 0; }
+    .stat-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, rgba(56,245,255,.22), rgba(168,85,247,.20));
+      box-shadow: inset 0 0 0 1px rgba(56,245,255,.22);
+    }
+    .stat span { color: var(--muted); font-size: 12px; }
+    .stat b { display: block; margin-top: 2px; font-size: 20px; }
+    .delta { color: #4ade80; font-size: 12px; }
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .module {
+      min-height: 82px;
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.04);
+      box-shadow: inset 0 0 0 1px rgba(105,224,255,.14);
+    }
+    .module span { color: var(--muted); font-size: 11px; }
+    .module strong { display: block; margin-top: 8px; font-size: 22px; color: var(--cyan); }
+    .bar-list { display: grid; gap: 12px; }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 76px 1fr 44px;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+    }
+    .bar {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      overflow: hidden;
+    }
+    .bar i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--cyan), var(--pink));
+      box-shadow: 0 0 16px rgba(255,97,216,.55);
+    }
+    .trend {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1.2fr .9fr .9fr;
+      gap: 18px;
+    }
+    .wave {
+      height: 158px;
+      width: 100%;
+    }
+    .wave path {
+      fill: none;
+      stroke-width: 3;
+      stroke-linecap: round;
+      filter: drop-shadow(0 0 10px rgba(255, 97, 216, .7));
+    }
+    .logline {
+      display: grid;
+      grid-template-columns: 54px 1fr auto;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid rgba(105,224,255,.12);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .logline:last-child { border-bottom: 0; }
+    .tag {
+      color: var(--cyan);
+      font-size: 11px;
+    }
+    .mini-cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .mini {
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.04);
+      box-shadow: inset 0 0 0 1px rgba(105,224,255,.14);
+    }
+    .mini span { color: var(--muted); font-size: 11px; }
+    .mini b { display: block; margin-top: 9px; color: var(--text); font-size: 18px; }
+    .note {
+      position: fixed;
+      left: 32px;
+      bottom: 8px;
+      z-index: 2;
+      color: rgba(234,247,255,.42);
+      font-size: 11px;
+    }
+    @media (max-width: 1100px) {
+      body { overflow: auto; }
+      .screen { height: auto; min-height: 100vh; }
+      .layout { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
+      .trend { grid-template-columns: 1fr; }
+      .hero { min-height: 560px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="screen" data-choice="cockpit-v2" onclick="window.toggleSelect && toggleSelect(this)">
+    <header class="topline">
+      <div class="title">
+        <h1>妙手自动化运营数据指挥中心</h1>
+        <p>MIAOSHOU AUTOMATION OPERATIONS COCKPIT · LOCAL WORKBENCH</p>
+      </div>
+    </header>
+
+    <section class="layout">
+      <aside class="column">
+        <div class="panel">
+          <div class="panel-head"><strong>今日核心指标</strong><span>LIVE</span></div>
+          <div class="panel-body stats">
+            <div class="stat"><i class="stat-icon"></i><div><span>累计任务</span><b>128</b></div><em class="delta">+12</em></div>
+            <div class="stat"><i class="stat-icon"></i><div><span>自动化成功率</span><b>94.2%</b></div><em class="delta">+3.1%</em></div>
+            <div class="stat"><i class="stat-icon"></i><div><span>商品处理量</span><b>3,842</b></div><em class="delta">+486</em></div>
+            <div class="stat"><i class="stat-icon"></i><div><span>平均耗时</span><b>2分18秒</b></div><em class="delta">-16秒</em></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><strong>模块产能</strong><span>MODULES</span></div>
+          <div class="panel-body module-grid">
+            <div class="module"><span>商品采集</span><strong>812</strong></div>
+            <div class="module"><span>编辑商品</span><strong>1,906</strong></div>
+            <div class="module"><span>秒杀活动</span><strong>74</strong></div>
+            <div class="module"><span>下架商品</span><strong>1,050</strong></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><strong>任务队列</strong><span>QUEUE</span></div>
+          <div class="panel-body">
+            <div class="bar-list">
+              <div class="bar-row"><span>执行中</span><div class="bar"><i style="width:76%"></i></div><b>1</b></div>
+              <div class="bar-row"><span>等待中</span><div class="bar"><i style="width:52%"></i></div><b>7</b></div>
+              <div class="bar-row"><span>验证码</span><div class="bar"><i style="width:18%"></i></div><b>1</b></div>
+              <div class="bar-row"><span>失败待重试</span><div class="bar"><i style="width:28%"></i></div><b>3</b></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="hero">
+        <div class="globe"></div>
+        <svg class="arc-layer" viewBox="0 0 1000 620" preserveAspectRatio="none">
+          <path d="M180 430 C320 120, 560 110, 760 390" stroke="rgba(56,245,255,.8)" />
+          <path d="M250 240 C430 40, 650 86, 840 210" stroke="rgba(255,97,216,.72)" />
+          <path d="M150 330 C360 520, 620 520, 880 280" stroke="rgba(129,140,248,.72)" />
+          <path d="M340 520 C420 260, 550 180, 708 95" stroke="rgba(56,245,255,.62)" />
+        </svg>
+        <i class="orbit-dot dot-a"></i>
+        <i class="orbit-dot dot-b"></i>
+        <i class="orbit-dot dot-c"></i>
+        <div class="center-chip">
+          <span>今日自动化处理商品</span>
+          <strong>3,842</strong>
+        </div>
+      </section>
+
+      <aside class="column">
+        <div class="panel">
+          <div class="panel-head"><strong>失败诊断雷达</strong><span>RISK</span></div>
+          <div class="panel-body bar-list">
+            <div class="bar-row"><span>验证码</span><div class="bar"><i style="width:62%"></i></div><b>12</b></div>
+            <div class="bar-row"><span>页面元素</span><div class="bar"><i style="width:44%"></i></div><b>8</b></div>
+            <div class="bar-row"><span>网络异常</span><div class="bar"><i style="width:37%"></i></div><b>6</b></div>
+            <div class="bar-row"><span>数据异常</span><div class="bar"><i style="width:24%"></i></div><b>4</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><strong>上限店铺监控</strong><span>LIMIT</span></div>
+          <div class="panel-body mini-cards">
+            <div class="mini"><span>命中店铺</span><b>16</b></div>
+            <div class="mini"><span>跳过店铺</span><b>5</b></div>
+            <div class="mini"><span>保留阈值</span><b>900</b></div>
+          </div>
+        </div>
+
+        <div class="panel" style="min-height: 260px;">
+          <div class="panel-head"><strong>关键日志流</strong><span>STREAM</span></div>
+          <div class="panel-body">
+            <div class="logline"><span>23:10</span><span>商品管理扫描发布失败记录</span><em class="tag">SCAN</em></div>
+            <div class="logline"><span>23:12</span><span>X TWO SHOP MY 下架结果确认</span><em class="tag">OK</em></div>
+            <div class="logline"><span>23:16</span><span>秒杀活动失败项重新提交</span><em class="tag">RETRY</em></div>
+            <div class="logline"><span>23:18</span><span>Buy 1 Take 1 SKU 加价完成</span><em class="tag">EDIT</em></div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="trend">
+        <div class="panel">
+          <div class="panel-head"><strong>24小时自动化吞吐趋势</strong><span>TREND</span></div>
+          <div class="panel-body">
+            <svg class="wave" viewBox="0 0 720 160" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="g1" x1="0" x2="1">
+                  <stop stop-color="#38f5ff" />
+                  <stop offset=".55" stop-color="#a855f7" />
+                  <stop offset="1" stop-color="#ff61d8" />
+                </linearGradient>
+              </defs>
+              <path d="M0 110 C60 20, 115 28, 170 92 S285 144, 360 76 S470 12, 542 76 S650 128, 720 30" stroke="url(#g1)" />
+              <path d="M0 128 C80 88, 130 96, 190 120 S320 62, 390 118 S520 136, 720 86" stroke="rgba(56,245,255,.34)" />
+              <path d="M0 140 L720 140" stroke="rgba(255,255,255,.12)" />
+            </svg>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><strong>采集质量</strong><span>SOURCING</span></div>
+          <div class="panel-body module-grid">
+            <div class="module"><span>平均评分</span><strong>86</strong></div>
+            <div class="module"><span>去重跳过</span><strong>42</strong></div>
+            <div class="module"><span>1688</span><strong>71%</strong></div>
+            <div class="module"><span>Amazon</span><strong>29%</strong></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><strong>运行健康度</strong><span>HEALTH</span></div>
+          <div class="panel-body">
+            <div class="center-chip" style="position: static; transform: none; min-width: 0; margin: 4px auto 0;">
+              <span>综合稳定指数</span>
+              <strong>92.8</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+    <div class="note">方向稿：视觉风格参考你给的深色全球链路 / 紫色流光数据大屏。点击页面可标记这个方向。</div>
+  </main>
+</body>
+</html>

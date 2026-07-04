@@ -1,0 +1,4 @@
+interface:
+  display_name: "妙手1688选品采集"
+  short_description: "在 1688 按美妆个护选品规则筛选商品，并通过妙手 ERP Chrome 插件采集到采集箱。"
+  default_prompt: "在 Chrome 打开 1688，按 TikTok Shop 马来西亚、菲律宾、泰国的美妆个护选品规则筛选商品，并用妙手 ERP 插件采集合格商品。"

@@ -35,9 +35,9 @@ assert.ok(
 );
 assert.ok(
   appSource.includes(':disabled-overflow="true"')
-    && /\.top-nav\.ant-layout-header\s*\{[^}]*grid-template-columns:\s*auto minmax\(760px,\s*1fr\) auto;/.test(styles)
-    && /\.top-menu\.ant-menu-horizontal\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*720px;/.test(styles),
-  'The desktop top navigation should reserve enough width and disable collapsed ellipsis overflow.',
+    && /\.top-nav\.ant-layout-header\s*\{[^}]*grid-template-columns:\s*minmax\(180px,\s*1fr\) minmax\(720px,\s*max-content\) minmax\(180px,\s*1fr\);/.test(styles)
+    && /\.top-menu\.ant-menu-horizontal\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*720px;[^}]*justify-self:\s*center;[^}]*justify-content:\s*center;/.test(styles),
+  'The desktop top navigation should reserve enough width, keep the menu centered, and disable collapsed ellipsis overflow.',
 );
 assert.ok(
   appSource.includes('src="/assets/tiktok-shop-logo.png"')

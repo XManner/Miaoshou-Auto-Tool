@@ -86,7 +86,7 @@ body {
 
 .top-nav.ant-layout-header {
   display: grid;
-  grid-template-columns: auto minmax(760px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(720px, max-content) minmax(180px, 1fr);
   min-height: 96px;
   height: auto;
   align-items: center;
@@ -110,6 +110,7 @@ body {
 
 .top-brand {
   min-width: 0;
+  justify-self: start;
 }
 
 .brand-logo {
@@ -142,8 +143,10 @@ body {
 }
 
 .top-menu.ant-menu-horizontal {
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   min-width: 720px;
+  justify-self: center;
   justify-content: center;
   border-bottom: 0;
   background: transparent;
@@ -246,6 +249,7 @@ body {
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
+  justify-self: end;
   gap: 10px;
 }
 
@@ -2426,6 +2430,7 @@ body {
   }
 
   .top-menu.ant-menu-horizontal {
+    width: 100%;
     justify-content: flex-start;
     min-width: 0;
   }
