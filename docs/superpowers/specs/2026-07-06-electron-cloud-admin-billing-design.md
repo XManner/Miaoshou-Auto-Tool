@@ -1,181 +1,194 @@
-# Electron Cloud Account, Admin, and Billing Design
+# Electron 云端账号、管理后台和计费设计
 
-## Goal
+## 目标
 
-Turn Miaoshou Auto Tool from a local-only workbench into a commercial desktop product.
+把妙手自动化工具从纯本地工作台，升级成可以商业化销售的桌面软件。
 
-The Electron app stays responsible for local browser automation, while a cloud service controls account login, subscription status, Token billing, feature permissions, model configuration, task records, and software updates.
+Electron 客户端继续负责本地浏览器自动化，云端服务负责账号登录、订阅状态、Token 计费、功能权限、模型配置、任务记录和软件更新。
 
-The first version should support both Mac and Windows clients, cloud accounts, subscription access, and Token-based billing for AI-heavy product editing.
+第一版需要同时支持 Mac 和 Windows 客户端，支持云端账号、订阅授权，以及针对 AI 商品编辑的 Token 按量计费。
 
-## Product Shape
+## 产品形态
 
-The commercial product has three surfaces:
+商业版产品分成三个使用入口：
 
-- `Electron 客户端`: the software customers install on their computer. It runs local automation, opens Chrome, shows task progress, and communicates with the cloud API.
-- `用户中心`: the customer-facing web portal. It shows subscription status, Token balance, consumption records, software downloads, invoices or payment records, and device binding.
-- `运营管理后台`: the internal admin portal for the product owner. It manages users, plans, Token grants, feature switches, model pricing, task diagnostics, announcements, and software version rules.
+- `Electron 客户端`：客户安装在自己电脑上的软件。它负责运行本地自动化、打开 Chrome、展示任务进度，并和云端接口通信。
+- `用户中心`：给客户使用的网页后台。它展示订阅状态、Token 余额、消费记录、软件下载、发票或支付记录、设备绑定等信息。
+- `运营管理后台`：给产品方内部使用的管理后台。它管理用户、套餐、Token 发放、功能开关、模型价格、任务诊断、公告和软件版本规则。
 
-The current local web workbench can be reused inside Electron as the client UI, but sensitive commercial state must move to the cloud.
+当前本地网页工作台可以复用到 Electron 客户端里，但商业化相关的敏感状态必须放到云端。
 
-## Billing Model
+## 计费模型
 
-Use a hybrid billing model:
+采用混合计费模型：
 
-- Subscription controls whether the software can be used.
-- AI-heavy editing consumes business Tokens.
-- Automation workflows that do not rely on large-model processing can be included in the subscription.
+- 订阅决定用户能不能使用软件。
+- AI 消耗较重的商品编辑功能消耗业务 Token。
+- 不依赖大模型处理的自动化流程，可以包含在订阅权益里。
 
-Recommended first-version rules:
+第一版推荐规则：
 
-| Feature | Billing |
+| 功能 | 计费方式 |
 | --- | --- |
-| 秒杀管理 | Subscription included, no Token charge |
-| 上限店铺商品下架 | Subscription included, no Token charge |
-| 商品采集 | Subscription included at first, with future rate limits |
-| 快速编辑商品 | 1 Token per successfully saved product |
-| 精细编辑商品 | 3 Tokens per successfully saved product |
-| Future image translation/redraw | Separate image-based Token charge |
+| 秒杀管理 | 订阅内可用，不扣 Token |
+| 上限店铺商品下架 | 订阅内可用，不扣 Token |
+| 商品采集 | 第一版订阅内可用，后续可增加频率限制 |
+| 快速编辑商品 | 每成功保存 1 个商品扣 1 Token |
+| 精细编辑商品 | 每成功保存 1 个商品扣 3 Token |
+| 未来图片翻译/重绘 | 单独按图片扣 Token |
 
-Do not expose raw model tokens as the customer-facing billing unit. Customers should see business Tokens tied to clear actions, such as successfully editing one product.
+第一版订阅套餐：
 
-Internally, the cloud service still records model usage and estimated cost for each task so pricing and margin can be reviewed later.
+| 套餐 | 价格 | 月度 Token |
+| --- | ---: | ---: |
+| VIP | 69 元/月 | 500 Token |
+| SVIP | 109 元/月 | 1000 Token |
 
-## Token Settlement
+支付渠道第一版使用微信支付，并使用公司主体开通微信支付商户号。
 
-The client should not decide billing on its own.
+月度 Token 不结转到下个月。用户当月未使用完的套餐内 Token，到下一个订阅周期时按新周期套餐额度重置。
 
-The cloud API owns all Token balance changes:
+支持单独购买 Token 包。第一版 Token 包规格为 1000 Token / 100 元，用于补充套餐内 Token 不足的情况。
 
-1. Before a paid task starts, the client requests a billing quote.
-2. The cloud checks subscription status, feature permission, and available Token balance.
-3. The cloud reserves the estimated maximum Token amount.
-4. The Electron app runs the task locally.
-5. The client reports per-product success, skip, and failure results.
-6. The cloud settles only successful paid units.
-7. Unused reserved Tokens are released.
+不要把大模型的原始 token 作为客户可见的计费单位。客户应该看到的是业务 Token，并且每次扣费都对应清晰动作，比如成功编辑了 1 个商品。
 
-Failed, skipped, or blocked products should not be charged.
+云端内部仍然需要记录每个任务的模型用量和估算成本，方便后续复盘定价和利润空间。
 
-If the client disconnects during a reserved task, the reservation should expire automatically after a timeout and return unused Tokens.
+## Token 结算
 
-## Cloud Modules
+客户端不能自己决定扣费。
 
-The first cloud version should include these modules:
+所有 Token 余额变化都由云端接口负责：
 
-- `Auth`: user registration, login, password reset, session refresh, and optional social login later.
-- `Subscription`: active plan, expiration time, renewal status, and feature entitlement.
-- `Token Ledger`: immutable Token grants, reservations, deductions, refunds, and manual adjustments.
-- `Feature Flags`: enable or disable functions per plan, user, or rollout group.
-- `Model Pricing`: provider, model name, input price, output price, image price, currency, and effective date.
-- `Task Records`: task type, user, device, status, summary, error reason, Token cost, and selected logs.
-- `Device Binding`: installed device list, activation limit, revoke action, and last seen time.
-- `Version Update`: latest version, minimum allowed version, download URL, update notes, and forced-upgrade flag.
-- `Announcements`: customer-facing messages in the client and user center.
+1. 付费任务开始前，客户端向云端请求计费预估。
+2. 云端检查订阅状态、功能权限和 Token 余额。
+3. 云端冻结本次任务预计最多消耗的 Token。
+4. Electron 客户端在本地运行任务。
+5. 客户端上报每个商品的成功、跳过和失败结果。
+6. 云端只对成功的付费单位正式扣费。
+7. 未使用的冻结 Token 自动释放。
 
-## Admin Portal
+失败、跳过或被拦截的商品不扣 Token。
 
-The internal admin portal should start small and practical.
+如果客户端在任务过程中断开连接，冻结记录需要在超时后自动释放，把未使用的 Token 退回给用户。
 
-Required first-version pages:
+## 云端模块
 
-- `用户管理`: search users, view status, disable account, view devices, view subscription and Token balance.
-- `订阅管理`: edit plan, expiration time, renewal status, and manually grant trial access.
-- `Token 管理`: grant Tokens, refund Tokens, inspect ledger records, and add adjustment notes.
-- `功能权限`: enable or disable features by plan or individual user.
-- `任务记录`: inspect task status, success count, failure count, error reason, and key logs.
-- `模型配置`: configure model providers, model names, unit prices, and whether a model is active.
-- `软件版本`: configure latest version, minimum version, download URL, and forced update.
-- `公告设置`: publish maintenance notices and release notes.
+第一版云端需要包含这些模块：
 
-Advanced features such as coupon codes, reseller accounts, team seats, invoice automation, and role-based admin permissions can wait until after the first paid version.
+- `账号认证`：用户注册、登录、密码重置、登录态刷新，后续可选增加第三方登录。
+- `订阅管理`：当前套餐、到期时间、续费状态和功能权益。
+- `Token 账本`：不可变的 Token 发放、冻结、扣除、退款和人工调整记录。
+- `功能开关`：按套餐、用户或灰度分组开启或关闭功能。
+- `模型价格`：供应商、模型名、输入价格、输出价格、图片价格、币种和生效时间。
+- `任务记录`：任务类型、用户、设备、状态、摘要、错误原因、Token 成本和关键日志。
+- `设备绑定`：已安装设备、激活数量限制、解绑操作和最后在线时间。
+- `版本更新`：最新版本、最低可用版本、下载地址、更新说明和强制升级标记。
+- `公告通知`：显示在客户端和用户中心里的维护通知、版本说明或运营公告。
 
-## User Center
+## 运营管理后台
 
-The customer-facing user center should include:
+内部管理后台第一版要小而实用。
 
-- Account profile and password management.
-- Current subscription plan and expiration time.
-- Token balance.
-- Token consumption records.
-- Payment or recharge records.
-- Activated devices and revoke device action.
-- Software downloads for Mac and Windows.
-- Basic help, update notes, and customer service entry.
+第一版必需页面：
 
-The user center does not need complex dashboards in the first version. Its main job is to let customers understand whether they can use the software and how their Tokens were consumed.
+- `用户管理`：搜索用户、查看状态、禁用账号、查看设备、查看订阅和 Token 余额。
+- `订阅管理`：修改套餐、到期时间、续费状态，手动发放试用权限。
+- `Token 管理`：发放 Token、退还 Token、查看账本记录、填写调整备注。
+- `功能权限`：按套餐或单个用户开启、关闭某个功能。
+- `任务记录`：查看任务状态、成功数量、失败数量、错误原因和关键日志。
+- `模型配置`：配置模型供应商、模型名、单价和是否启用。
+- `软件版本`：配置最新版本、最低版本、下载地址和是否强制更新。
+- `公告设置`：发布维护通知和版本说明。
 
-## Electron Client Integration
+优惠券、代理商、团队席位、自动发票、复杂管理员角色权限这些高级能力，可以等第一版收费跑通后再做。
 
-On startup, the Electron client should:
+## 用户中心
 
-1. Ask the user to log in.
-2. Register or refresh the current device.
-3. Pull subscription status and feature permissions.
-4. Pull client configuration such as API endpoint, feature flags, and model behavior policy.
-5. Check whether the current client version is allowed.
+客户使用的用户中心需要包含：
 
-Before running a paid task, the client must request permission and a Token reservation from the cloud.
+- 账号资料和密码管理。
+- 当前订阅套餐和到期时间。
+- Token 余额。
+- Token 消费记录。
+- 支付或充值记录。
+- 已激活设备，以及解绑设备操作。
+- Mac 和 Windows 软件下载。
+- 基础帮助、更新说明和客服联系入口。
 
-The client should keep local automation secrets, such as the user's Miaoshou account and local browser profile, on the user's computer. It should not upload Miaoshou password, browser cookies, local storage, or third-party session data to the cloud.
+第一版用户中心不需要做复杂数据大屏。它的核心作用是让客户清楚知道自己还能不能使用软件、Token 是怎么被消耗的。
 
-## Configuration Ownership
+## Electron 客户端接入
 
-Commercial configuration should live in the cloud, not inside the Electron package.
+Electron 客户端启动时需要：
 
-Cloud-owned settings:
+1. 要求用户登录。
+2. 注册或刷新当前设备。
+3. 拉取订阅状态和功能权限。
+4. 拉取客户端配置，比如接口地址、功能开关和模型行为策略。
+5. 检查当前客户端版本是否仍然允许使用。
 
-- Subscription plan definitions.
-- Feature permissions.
-- Token deduction rules.
-- AI model provider choices.
-- AI model unit prices.
-- App version policy.
-- Announcements.
-- Admin manual grants or refunds.
+运行付费任务前，客户端必须先向云端请求执行权限和 Token 冻结。
 
-Client-owned settings:
+客户端应该把本地自动化密钥和状态保存在用户电脑上，比如用户的妙手账号配置和本地浏览器配置。妙手账号由客户填入后，应长期保存在本地，避免客户每次打开软件都重新填写。不要把妙手密码、浏览器 Cookie、浏览器本地存储或第三方平台登录态上传到云端。
 
-- Local browser profile.
-- Local Miaoshou login state.
-- User-entered Miaoshou account configuration unless the user explicitly opts into future cloud sync.
-- Local task runtime files and temporary captcha screenshots.
+## 配置归属
 
-## Security Rules
+商业化配置应该放在云端，不能写死在 Electron 安装包里。
 
-The cloud must never receive or store:
+云端负责的配置：
 
-- Miaoshou passwords.
-- Browser cookies.
-- Browser local storage.
-- Third-party platform session Tokens.
-- Captcha images unless the user explicitly submits them for support diagnostics.
+- 订阅套餐定义。
+- 功能权限。
+- Token 扣费规则。
+- AI 模型供应商选择。
+- AI 模型单价。
+- 软件版本策略。
+- 公告通知。
+- 管理员手动发放或退还记录。
 
-The client should authenticate to the cloud using a short-lived access token plus refresh token. Device identity should be revocable from the user center or admin portal.
+客户端负责的配置：
 
-Admin actions that change subscription, Tokens, feature permissions, or user status must be audit-logged.
+- 本地浏览器配置。
+- 本地妙手登录状态。
+- 用户填写的妙手账号配置，第一版长期保存在本地，除非未来用户明确选择同步到云端。
+- 本地任务运行文件和临时验证码截图。
 
-## Data Model Draft
+## 安全规则
 
-Core tables or collections:
+云端绝对不能接收或保存：
 
-- `users`: account profile and status.
-- `devices`: user devices, activation state, platform, version, last seen time.
-- `plans`: subscription plan definitions.
-- `subscriptions`: user plan, start time, end time, status.
-- `feature_entitlements`: plan-level and user-level feature permissions.
-- `token_ledger`: grants, reservations, deductions, refunds, and adjustments.
-- `token_reservations`: active reservations with expiration.
-- `tasks`: task metadata and summary.
-- `task_events`: selected progress, errors, and billing events.
-- `model_price_rules`: model pricing by provider and effective date.
-- `app_versions`: release metadata and minimum version policy.
-- `announcements`: client and user-center notices.
-- `admin_audit_logs`: admin actions and reasons.
+- 妙手密码。
+- 浏览器 Cookie。
+- 浏览器本地存储。
+- 第三方平台登录 Token。
+- 验证码图片，除非用户明确为了客服排查主动提交。
 
-## API Draft
+客户端应该使用短期访问令牌加刷新令牌和云端通信。设备身份需要可以从用户中心或运营管理后台解绑。
 
-First-version cloud APIs:
+管理员修改订阅、Token、功能权限或用户状态时，必须记录审计日志。
+
+## 数据模型草案
+
+核心数据表或集合：
+
+- `users`：用户账号资料和状态。
+- `devices`：用户设备、激活状态、平台、版本和最后在线时间。
+- `plans`：订阅套餐定义。
+- `subscriptions`：用户套餐、开始时间、结束时间和状态。
+- `feature_entitlements`：套餐级和用户级功能权限。
+- `token_ledger`：Token 发放、冻结、扣除、退款和调整记录。
+- `token_reservations`：有效中的 Token 冻结记录和过期时间。
+- `tasks`：任务元信息和摘要。
+- `task_events`：关键进度、错误和计费事件。
+- `model_price_rules`：按供应商和生效时间保存的模型价格规则。
+- `app_versions`：软件发布信息和最低可用版本策略。
+- `announcements`：客户端和用户中心公告。
+- `admin_audit_logs`：管理员操作和原因。
+
+## 接口草案
+
+第一版云端接口：
 
 - `POST /auth/login`
 - `POST /auth/refresh`
@@ -194,56 +207,60 @@ First-version cloud APIs:
 - `PATCH /tasks/:id`
 - `POST /tasks/:id/events`
 
-Admin APIs should be separated under `/admin/*` and require an admin role.
+管理后台接口应该统一放在 `/admin/*` 下，并且必须要求管理员权限。
 
-## Deployment Approach
+## 部署方案
 
-Recommended first-version stack:
+第一版推荐技术栈：
 
-- API service: Node.js with a clear REST API.
-- Database: PostgreSQL.
-- Cache or queue: optional at first; Redis can be added when reservations, task events, or async billing grow.
-- File storage: object storage for Electron installers and release assets.
-- Admin/user web apps: can be one web project with separate routes and permissions.
+- 接口服务：Node.js，提供清晰的 REST 接口。
+- 数据库：PostgreSQL。
+- 缓存或队列：第一版可选；当 Token 冻结、任务事件或异步计费规模变大后再加 Redis。
+- 文件存储：对象存储，用来保存 Electron 安装包和发布资源。
+- 管理后台和用户中心：第一版共用同一个前端项目，通过路由和权限区分入口。
 
-The current local Node scripts can remain mostly unchanged at first. The Electron wrapper and cloud API should be introduced around them instead of rewriting the automation logic immediately.
+当前本地 Node 脚本第一版可以基本保持不变。先在外层增加 Electron 包装和云端接口，不要一开始就重写自动化逻辑。
 
-## Rollout Plan
+## 推进顺序
 
-Build in this order:
+建议按这个顺序建设：
 
-1. Cloud account login and device activation.
-2. Subscription state and feature permission checks.
-3. Token ledger and reservation/settlement flow.
-4. Electron login and cloud authorization.
-5. Product-editing billing integration.
-6. User center for subscription, Tokens, and downloads.
-7. Internal admin portal.
-8. Version update and announcements.
-9. Payment provider integration.
+1. 云端账号登录和设备激活。
+2. 订阅状态和功能权限校验。
+3. Token 账本、冻结和结算流程。
+4. Electron 登录和云端授权。
+5. 商品编辑计费接入。
+6. 用户中心的订阅、Token 和下载页面。
+7. 运营管理后台。
+8. 软件版本更新和公告。
+9. 微信支付接入，使用公司主体。
 
-Payment can be added after manual subscription and Token grants work reliably. This lowers first-version risk.
+支付可以等手动开通订阅和手动发放 Token 跑稳定后再接入。这样第一版风险更低。
 
-## Testing
+## 测试
 
-Add tests for:
+需要增加这些测试：
 
-- Subscription expiry blocks paid and subscription-only features.
-- Feature flags enable or disable each workflow correctly.
-- Token reservation succeeds only with enough balance.
-- Successful edited products settle Tokens.
-- Failed or skipped products release reserved Tokens.
-- Reservation timeout returns unused Tokens.
-- Admin Token grants and refunds write immutable ledger records.
-- Device limit blocks extra activations and allows revoked devices to be replaced.
-- Old client versions are blocked when minimum version is raised.
+- 订阅过期时，付费功能和订阅内功能都会被正确拦截。
+- 功能开关可以正确开启或关闭每个工作流。
+- Token 余额充足时才能冻结成功。
+- 成功编辑的商品会正式扣除 Token。
+- 失败或跳过的商品会释放冻结 Token。
+- 冻结记录超时后会归还未使用 Token。
+- 管理员发放和退还 Token 会写入不可变账本记录。
+- 设备数量超过限制时会阻止新设备激活，解绑后允许替换设备。
+- 提高最低可用版本后，旧客户端会被正确拦截。
 
-## Open Decisions
+## 已确认决策
 
-These decisions can be finalized before implementation planning:
+当前已确认这些产品决策：
 
-- Payment provider for the first paid version.
-- Whether user center and admin portal share one frontend project.
-- Whether Miaoshou account settings remain local-only in version one.
-- Exact subscription plan names and prices.
-- Exact included monthly Token allowance per plan.
+- 第一版支付渠道使用微信支付。
+- 微信支付使用公司主体。
+- 用户中心和运营管理后台共用同一个前端项目。
+- 妙手账号由客户填入后长期保存在本地，不要求客户每次重新填写。
+- 套餐分为 VIP 和 SVIP。
+- VIP 价格为 69 元/月，包含 500 月度 Token。
+- SVIP 价格为 109 元/月，包含 1000 月度 Token。
+- 月度 Token 不结转到下个月。
+- 支持单独购买 Token 包，规格为 1000 Token / 100 元。
