@@ -2609,7 +2609,7 @@ body {
   --cockpit-line: rgba(255, 255, 255, 0.08);
   min-height: 100vh;
   overflow: auto;
-  padding: 34px 0 58px;
+  padding: 34px clamp(16px, 2.8vw, 56px) 58px;
   background:
     radial-gradient(circle at 50% 0%, rgba(155, 68, 255, 0.22), transparent 30rem),
     linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0));
@@ -2626,7 +2626,7 @@ body {
   z-index: 1;
   display: grid;
   gap: 34px;
-  width: min(1120px, calc(100vw - 48px));
+  width: 100%;
   margin: 0 auto;
 }
 
@@ -3013,10 +3013,6 @@ body {
 }
 
 @media (max-width: 1180px) {
-  .cockpit-dashboard-stack {
-    width: min(760px, calc(100vw - 28px));
-  }
-
   .cockpit-reference-grid-top,
   .cockpit-exposure-grid,
   .cockpit-threat-grid {
@@ -3046,11 +3042,10 @@ body {
 
 @media (max-width: 640px) {
   .cockpit-screen:has(.cockpit-dashboard-stack) {
-    padding: 18px 0 34px;
+    padding: 18px 10px 34px;
   }
 
   .cockpit-dashboard-stack {
-    width: calc(100vw - 20px);
     gap: 22px;
   }
 

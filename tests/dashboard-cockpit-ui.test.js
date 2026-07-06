@@ -90,4 +90,12 @@ assert.ok(
   'Dashboard should include a responsive fallback for smaller windows.',
 );
 
+assert.ok(
+  /\.cockpit-dashboard-stack\s*\{[\s\S]*width:\s*100%;/.test(styles)
+    && !styles.includes('width: min(1120px, calc(100vw - 48px));')
+    && !styles.includes('width: min(760px, calc(100vw - 28px));')
+    && !styles.includes('width: calc(100vw - 20px);'),
+  'Dashboard stack should fill the available browser width instead of using fixed max-width bands.',
+);
+
 console.log('dashboard cockpit UI checks passed');
